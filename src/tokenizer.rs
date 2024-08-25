@@ -47,11 +47,11 @@ pub(crate) enum TokenKind {
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct Token {
-    kind: TokenKind,
-    code: String,
-    literal: Option<String>,
-    row: usize,
-    col: usize,
+    pub kind: TokenKind,
+    pub code: String,
+    pub literal: Option<String>,
+    pub row: usize,
+    pub col: usize,
 }
 impl Display for Token {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -68,6 +68,19 @@ impl Display for Token {
 }
 
 pub(crate) fn tokenize_string(str: &str) -> (Vec<Token>, bool) {
+    let (mut tokens, has_errors) = tokenize_string_no_eof(str);
+    let eof = Token {
+        kind: TokenKind::EOF,
+        code: "".to_string(),
+        literal: None,
+        row: 0,
+        col: 0,
+    };
+    tokens.push(eof);
+    (tokens, has_errors)
+}
+
+pub(crate) fn tokenize_string_no_eof(str: &str) -> (Vec<Token>, bool) {
     let chars = str.chars().collect::<Vec<_>>();
     let mut row = 1usize;
     let mut col = 1usize;
@@ -128,7 +141,6 @@ pub(crate) fn tokenize_string(str: &str) -> (Vec<Token>, bool) {
                 col += 1;
                 while (index < len) && (chars[index] != '\n') {
                     index += 1;
-                    col += 1; // need to keep track of col in case if we hit EOF while in comment, EOF token should have correct position
                 }
                 continue;
             }
@@ -197,8 +209,13 @@ pub(crate) fn tokenize_string(str: &str) -> (Vec<Token>, bool) {
             let mut literal = String::new();
             while (index < len) && (chars[index] != '"') {
                 literal.push(chars[index]);
+                if chars[index] == '\n' {
+                    row += 1;
+                    col = 1;
+                } else {
+                    col += 1;
+                }
                 index += 1;
-                col += 1;
             }
             if index == len {
                 eprintln!("[line {row}] Error: Unterminated string.");
@@ -240,14 +257,6 @@ pub(crate) fn tokenize_string(str: &str) -> (Vec<Token>, bool) {
         eprintln!("[line {row}] Error: Unexpected character: {char}");
         has_errors = true;
     }
-    let eof = Token {
-        kind: TokenKind::EOF,
-        code: "".to_string(),
-        literal: None,
-        row,
-        col: if col == 1 { 1 } else { col + 1 },
-    };
-    tokens.push(eof);
     (tokens, has_errors)
 }
 
