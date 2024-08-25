@@ -18,6 +18,7 @@ impl Display for Expression {
                 Literal::Bool(b) => f.write_fmt(format_args!("{b}")),
                 Literal::Nil => f.write_str("nil"),
             }
+            Expression::Grouping(inner) => f.write_fmt(format_args!("(group {inner})")),
             _ => panic!("display is not implemented yet for this type of expression {:?}", self),
         }
     }
@@ -91,6 +92,25 @@ fn parse_expression_from_tokens(tail: &[Token]) -> Option<(Expression, &[Token])
     if let Some(literal) = literal {
         return Some((Expression::Literal(literal), tail));
     }
+    if token.kind == TokenKind::LEFT_PAREN {
+        let (inner, tail) = parse_expression_from_tokens(tail)?;
+        let Some((next, tail)) = tail.split_first() else {
+            eprintln!("Parenthesis that was opened at {}:{} is never closed", token.row, token.col);
+            return None;
+        };
+        if next.kind != TokenKind::RIGHT_PAREN {
+            eprintln!(
+                "Expected closing parenthesis at {}:{}, got {:?} instead. Parenthesis was opened at {}:{}",
+                next.row,
+                next.col,
+                next.kind,
+                token.row,
+                token.col,
+            );
+            return None;
+        }
+        return Some((Expression::Grouping(Box::new(inner)), tail));
+    }
     eprintln!("Unexpected token kind {:?} at {}:{}", token.kind, token.row, token.col);
     None
 }
@@ -106,5 +126,10 @@ mod test {
             assert_eq!(str, parse_expression_from_string(str).unwrap().to_string(), "value {str}");
         }
         assert_eq!("asdf", parse_expression_from_string("\"asdf\"").unwrap().to_string());
+    }
+
+    #[test]
+    fn test_parse_group() {
+        assert_eq!("(group foo)", parse_expression_from_string("(\"foo\")").unwrap().to_string());
     }
 }
