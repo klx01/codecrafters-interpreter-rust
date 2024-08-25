@@ -44,6 +44,8 @@ fn parse_command(filename: &str) {
         .expect(&format!("failed to read file {filename}"));
     if let Some(expr) = parse_expression_from_string(&file_contents) {
         println!("{expr}");
+    } else {
+        exit(65)
     }
 }
 

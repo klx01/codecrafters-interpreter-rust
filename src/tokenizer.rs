@@ -83,7 +83,7 @@ pub(crate) fn tokenize_string(str: &str) -> (Vec<Token>, bool) {
 pub(crate) fn tokenize_string_no_eof(str: &str) -> (Vec<Token>, bool) {
     let chars = str.chars().collect::<Vec<_>>();
     let mut row = 1usize;
-    let mut col = 1usize;
+    let mut col = 0usize;
     let mut tokens = vec![];
     let mut has_errors = false;
     let mut index = 0usize;
