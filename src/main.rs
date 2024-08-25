@@ -53,6 +53,10 @@ enum TokenKind {
     EQUAL,
     BANG,
     BANG_EQUAL,
+    LESS,
+    LESS_EQUAL,
+    GREATER,
+    GREATER_EQUAL,
 }
 
 #[derive(Debug, PartialEq)]
@@ -99,6 +103,8 @@ fn tokenize_string(str: &str) -> (Vec<Token>, bool) {
             let matched_kind = match (char, next) {
                 ('=', '=') => Some(TokenKind::EQUAL_EQUAL),
                 ('!', '=') => Some(TokenKind::BANG_EQUAL),
+                ('<', '=') => Some(TokenKind::LESS_EQUAL),
+                ('>', '=') => Some(TokenKind::GREATER_EQUAL),
                 _ => None,
             };
             if let Some(kind) = matched_kind {
@@ -124,6 +130,8 @@ fn tokenize_string(str: &str) -> (Vec<Token>, bool) {
             '/' => Some(TokenKind::SLASH),
             '=' => Some(TokenKind::EQUAL),
             '!' => Some(TokenKind::BANG),
+            '<' => Some(TokenKind::LESS),
+            '>' => Some(TokenKind::GREATER),
             _ => None,
         };
         if let Some(kind) = char_token_kind {
@@ -229,6 +237,19 @@ EOF  null";
         let expected_tokens = "BANG ! null
 BANG_EQUAL != null
 EQUAL_EQUAL == null
+EOF  null";
+        let (tokens, has_errors) = tokenize_string(str);
+        assert_eq!(expected_tokens, tokens_as_string(&tokens));
+        assert!(!has_errors);
+    }
+
+    #[test]
+    fn test_tokenize_relation() {
+        let str = "<<=>>=";
+        let expected_tokens = "LESS < null
+LESS_EQUAL <= null
+GREATER > null
+GREATER_EQUAL >= null
 EOF  null";
         let (tokens, has_errors) = tokenize_string(str);
         assert_eq!(expected_tokens, tokens_as_string(&tokens));
