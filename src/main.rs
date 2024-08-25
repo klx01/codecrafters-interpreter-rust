@@ -36,6 +36,8 @@ enum TokenKind {
     EOF,
     LEFT_PAREN,
     RIGHT_PAREN,
+    LEFT_BRACE,
+    RIGHT_BRACE,
 }
 #[derive(Debug, PartialEq)]
 struct Token {
@@ -72,25 +74,29 @@ fn tokenize_string(str: &str) -> Vec<Token> {
         } else {
             col += 1;
         }
+        
+        let char_token_kind = match char {
+            '(' => Some(TokenKind::LEFT_PAREN),
+            ')' => Some(TokenKind::RIGHT_PAREN),
+            '{' => Some(TokenKind::LEFT_BRACE),
+            '}' => Some(TokenKind::RIGHT_BRACE),
+            _ => None,
+        }; 
+        if let Some(kind) = char_token_kind {
+            let token = Token{
+                kind,
+                code: char.to_string(),
+                literal: None,
+                row,
+                col,
+            };
+            tokens.push(token);
+            continue;
+        }
 
-        let token = match char {
-            '(' => Token{
-                kind: TokenKind::LEFT_PAREN,
-                code: char.to_string(),
-                literal: None,
-                row,
-                col,
-            },
-            ')' => Token{
-                kind: TokenKind::RIGHT_PAREN,
-                code: char.to_string(),
-                literal: None,
-                row,
-                col,
-            },
+        match char {
             _ => panic!("Unexpected character {char} code {:X} at char position {row}:{col}", char as u32),
-        };
-        tokens.push(token);
+        }
     }
     let eof = Token {
         kind: TokenKind::EOF,
@@ -121,6 +127,18 @@ mod test {
         let expected_tokens = "LEFT_PAREN ( null
 LEFT_PAREN ( null
 RIGHT_PAREN ) null
+EOF  null";
+        let tokens = tokenize_string(str);
+        assert_eq!(expected_tokens, tokens_as_string(&tokens));
+    }
+
+    #[test]
+    fn test_tokenize_braces() {
+        let str = "{{}}";
+        let expected_tokens = "LEFT_BRACE { null
+LEFT_BRACE { null
+RIGHT_BRACE } null
+RIGHT_BRACE } null
 EOF  null";
         let tokens = tokenize_string(str);
         assert_eq!(expected_tokens, tokens_as_string(&tokens));
