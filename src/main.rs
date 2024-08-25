@@ -49,6 +49,8 @@ enum TokenKind {
     SEMICOLON,
     MINUS,
     SLASH,
+    EQUAL_EQUAL,
+    EQUAL,
 }
 
 #[derive(Debug, PartialEq)]
@@ -79,13 +81,30 @@ fn tokenize_string(str: &str) -> (Vec<Token>, bool) {
     let mut col = 1usize;
     let mut tokens = vec![];
     let mut has_errors = false;
-    for index in 0..chars.len() {
+    let mut index = 0usize;
+    while index < chars.len() {
         let char = chars[index];
+        index += 1;
+
         if char == '\n' {
             row += 1;
             col = 1;
         } else {
             col += 1;
+        }
+
+        if let Some(next) = chars.get(index) {
+            let matched_kind = match (char, next) {
+                ('=', '=') => Some(TokenKind::EQUAL_EQUAL),
+                _ => None,
+            };
+            if let Some(kind) = matched_kind {
+                index += 1;
+                col += 1;
+                let token = Token{ kind, code: format!("{char}{next}"), literal: None, row, col };
+                tokens.push(token);
+                continue;
+            }
         }
 
         let char_token_kind = match char {
@@ -100,16 +119,11 @@ fn tokenize_string(str: &str) -> (Vec<Token>, bool) {
             '-' => Some(TokenKind::MINUS),
             ';' => Some(TokenKind::SEMICOLON),
             '/' => Some(TokenKind::SLASH),
+            '=' => Some(TokenKind::EQUAL),
             _ => None,
         };
         if let Some(kind) = char_token_kind {
-            let token = Token{
-                kind,
-                code: char.to_string(),
-                literal: None,
-                row,
-                col,
-            };
+            let token = Token{ kind, code: char.to_string(), literal: None, row, col };
             tokens.push(token);
             continue;
         }
@@ -185,6 +199,20 @@ RIGHT_PAREN ) null
 MINUS - null
 SEMICOLON ; null
 SLASH / null
+EOF  null";
+        let (tokens, has_errors) = tokenize_string(str);
+        assert_eq!(expected_tokens, tokens_as_string(&tokens));
+        assert!(!has_errors);
+    }
+
+    #[test]
+    fn test_tokenize_equals() {
+        let str = "={===}";
+        let expected_tokens = "EQUAL = null
+LEFT_BRACE { null
+EQUAL_EQUAL == null
+EQUAL = null
+RIGHT_BRACE } null
 EOF  null";
         let (tokens, has_errors) = tokenize_string(str);
         assert_eq!(expected_tokens, tokens_as_string(&tokens));
