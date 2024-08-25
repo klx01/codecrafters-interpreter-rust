@@ -1,4 +1,5 @@
-use std::env;
+use std::collections::HashMap;
+use std::{cmp, env};
 use std::fs;
 use std::fmt::{Display, Formatter};
 use std::process::exit;
@@ -34,7 +35,7 @@ fn tokenize_command(filename: &str) {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 #[allow(non_camel_case_types)]
 enum TokenKind {
     EOF,
@@ -60,6 +61,22 @@ enum TokenKind {
     STRING,
     NUMBER,
     IDENTIFIER,
+    AND,
+    CLASS,
+    ELSE,
+    FALSE,
+    FOR,
+    FUN,
+    IF,
+    NIL,
+    OR,
+    PRINT,
+    RETURN,
+    SUPER,
+    THIS,
+    TRUE,
+    VAR,
+    WHILE,
 }
 
 #[derive(Debug, PartialEq)]
@@ -92,6 +109,8 @@ fn tokenize_string(str: &str) -> (Vec<Token>, bool) {
     let mut has_errors = false;
     let mut index = 0usize;
     let len = chars.len();
+    let reserved = get_reserved_keywords();
+    let keyword_max_len = reserved.keys().map(|x| x.len()).max().unwrap();
     while index < len {
         let char = chars[index];
         index += 1;
@@ -219,6 +238,21 @@ fn tokenize_string(str: &str) -> (Vec<Token>, bool) {
         }
 
         if is_identifier_char(char) {
+            if let Some((kind, code)) = get_keyword_kind(&chars, index, &reserved, keyword_max_len) {
+                let advance = code.len() - 1;
+                index += advance;
+                col += advance;
+                let token = Token{
+                    kind,
+                    code,
+                    literal: None,
+                    row,
+                    col,
+                };
+                tokens.push(token);
+                continue;
+            }
+
             let mut code = String::from(char);
             while (index < len) && is_identifier_char(chars[index]) {
                 code.push(chars[index]);
@@ -248,6 +282,48 @@ fn tokenize_string(str: &str) -> (Vec<Token>, bool) {
     };
     tokens.push(eof);
     (tokens, has_errors)
+}
+
+fn get_keyword_kind(chars: &[char], index: usize, reserved: &HashMap<Vec<char>, TokenKind>, keyword_max_len: usize) -> Option<(TokenKind, String)>{
+    let len = chars.len();
+    let keyword_start = index - 1;
+    let keyword_test_until = cmp::min(len, keyword_start + keyword_max_len);
+    let keyword_test_slice = &chars[keyword_start..keyword_test_until];
+    for (keyword, &kind) in reserved {
+        if keyword_test_slice.starts_with(keyword) {
+            let next_index = keyword_start + keyword.len();
+            if (next_index >= len) || !is_identifier_char(chars[next_index]) {
+                return Some((kind, keyword_test_slice[..keyword.len()].iter().collect()));
+            }
+        }
+    }
+    None
+}
+
+fn get_reserved_keywords() -> HashMap<Vec<char>, TokenKind> {
+    let reserved_source = HashMap::from([
+        ("and", TokenKind::AND),
+        ("class", TokenKind::CLASS),
+        ("else", TokenKind::ELSE),
+        ("false", TokenKind::FALSE),
+        ("for", TokenKind::FOR),
+        ("fun", TokenKind::FUN),
+        ("if", TokenKind::IF),
+        ("nil", TokenKind::NIL),
+        ("or", TokenKind::OR),
+        ("print", TokenKind::PRINT),
+        ("return", TokenKind::RETURN),
+        ("super", TokenKind::SUPER),
+        ("this", TokenKind::THIS),
+        ("true", TokenKind::TRUE),
+        ("var", TokenKind::VAR),
+        ("while", TokenKind::WHILE),
+    ]);
+    let mut reserved = HashMap::new();
+    for (key, value) in reserved_source {
+        reserved.insert(key.chars().collect::<Vec<_>>(), value);
+    }
+    reserved
 }
 
 fn is_identifier_char(char: char) -> bool {
@@ -447,6 +523,21 @@ EOF  null";
         let expected_tokens = "IDENTIFIER foo null
 IDENTIFIER bar null
 IDENTIFIER _hello null
+EOF  null";
+        let (tokens, has_errors) = tokenize_string(str);
+        assert_eq!(expected_tokens, tokens_as_string(&tokens));
+        assert!(!has_errors);
+    }
+
+    #[test]
+    fn test_tokenize_reserved() {
+        let str = "and and_ and0 andif return fun";
+        let expected_tokens = "AND and null
+IDENTIFIER and_ null
+IDENTIFIER and0 null
+IDENTIFIER andif null
+RETURN return null
+FUN fun null
 EOF  null";
         let (tokens, has_errors) = tokenize_string(str);
         assert_eq!(expected_tokens, tokens_as_string(&tokens));
