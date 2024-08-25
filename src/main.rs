@@ -99,6 +99,10 @@ fn tokenize_string(str: &str) -> (Vec<Token>, bool) {
         } else {
             col += 1;
         }
+        
+        if char.is_whitespace() {
+            continue;
+        }
 
         if let Some(&next) = chars.get(index) {
             let matched_kind = match (char, next) {
@@ -282,6 +286,18 @@ EOF  null";
         let str = "/()";
         let expected_tokens = "SLASH / null
 LEFT_PAREN ( null
+RIGHT_PAREN ) null
+EOF  null";
+        let (tokens, has_errors) = tokenize_string(str);
+        assert_eq!(expected_tokens, tokens_as_string(&tokens));
+        assert!(!has_errors);
+    }
+
+    #[test]
+    fn test_tokenize_spaces() {
+        let str = "(
+ )";
+        let expected_tokens = "LEFT_PAREN ( null
 RIGHT_PAREN ) null
 EOF  null";
         let (tokens, has_errors) = tokenize_string(str);
