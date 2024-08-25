@@ -88,7 +88,8 @@ fn tokenize_string(str: &str) -> (Vec<Token>, bool) {
     let mut tokens = vec![];
     let mut has_errors = false;
     let mut index = 0usize;
-    while index < chars.len() {
+    let len = chars.len();
+    while index < len {
         let char = chars[index];
         index += 1;
 
@@ -99,7 +100,7 @@ fn tokenize_string(str: &str) -> (Vec<Token>, bool) {
             col += 1;
         }
 
-        if let Some(next) = chars.get(index) {
+        if let Some(&next) = chars.get(index) {
             let matched_kind = match (char, next) {
                 ('=', '=') => Some(TokenKind::EQUAL_EQUAL),
                 ('!', '=') => Some(TokenKind::BANG_EQUAL),
@@ -112,6 +113,15 @@ fn tokenize_string(str: &str) -> (Vec<Token>, bool) {
                 col += 1;
                 let token = Token{ kind, code: format!("{char}{next}"), literal: None, row, col };
                 tokens.push(token);
+                continue;
+            }
+            if (char, next) == ('/', '/') {
+                index = index + 1;
+                col += 1;
+                while (index < len) && (chars[index] != '\n') {
+                    index += 1;
+                    col += 1; // need to keep track of col in case if we hit EOF while in comment, EOF token should have correct position
+                }
                 continue;
             }
         }
@@ -250,6 +260,29 @@ EOF  null";
 LESS_EQUAL <= null
 GREATER > null
 GREATER_EQUAL >= null
+EOF  null";
+        let (tokens, has_errors) = tokenize_string(str);
+        assert_eq!(expected_tokens, tokens_as_string(&tokens));
+        assert!(!has_errors);
+    }
+
+    #[test]
+    fn test_tokenize_comment() {
+        let str = "()// Comment";
+        let expected_tokens = "LEFT_PAREN ( null
+RIGHT_PAREN ) null
+EOF  null";
+        let (tokens, has_errors) = tokenize_string(str);
+        assert_eq!(expected_tokens, tokens_as_string(&tokens));
+        assert!(!has_errors);
+    }
+
+    #[test]
+    fn test_tokenize_slash() {
+        let str = "/()";
+        let expected_tokens = "SLASH / null
+LEFT_PAREN ( null
+RIGHT_PAREN ) null
 EOF  null";
         let (tokens, has_errors) = tokenize_string(str);
         assert_eq!(expected_tokens, tokens_as_string(&tokens));
