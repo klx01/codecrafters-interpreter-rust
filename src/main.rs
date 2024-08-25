@@ -57,6 +57,7 @@ enum TokenKind {
     LESS_EQUAL,
     GREATER,
     GREATER_EQUAL,
+    STRING,
 }
 
 #[derive(Debug, PartialEq)]
@@ -99,7 +100,7 @@ fn tokenize_string(str: &str) -> (Vec<Token>, bool) {
         } else {
             col += 1;
         }
-        
+
         if char.is_whitespace() {
             continue;
         }
@@ -154,12 +155,35 @@ fn tokenize_string(str: &str) -> (Vec<Token>, bool) {
             continue;
         }
 
-        match char {
-            _ => {
-                eprintln!("[line {row}] Error: Unexpected character: {char}");
+        if char == '"' {
+            // todo: this does not handle escaped quotes \"
+            let mut literal = String::new();
+            while (index < len) && (chars[index] != '"') {
+                literal.push(chars[index]);
+                index += 1;
+                col += 1;
+            }
+            if index == len {
+                eprintln!("[line {row}] Error: Unterminated string.");
                 has_errors = true;
-            },
+            } else {
+                let close_char = chars[index];
+                index += 1;
+                col += 1;
+                let token = Token{
+                    kind: TokenKind::STRING,
+                    code: format!("{char}{literal}{close_char}"),
+                    literal: Some(literal),
+                    row,
+                    col,
+                };
+                tokens.push(token);
+            }
+            continue;
         }
+
+        eprintln!("[line {row}] Error: Unexpected character: {char}");
+        has_errors = true;
     }
     let eof = Token {
         kind: TokenKind::EOF,
@@ -303,6 +327,25 @@ EOF  null";
         let (tokens, has_errors) = tokenize_string(str);
         assert_eq!(expected_tokens, tokens_as_string(&tokens));
         assert!(!has_errors);
+    }
+
+    #[test]
+    fn test_tokenize_string_valid() {
+        let str = "\"foo baz\"";
+        let expected_tokens = "STRING \"foo baz\" foo baz
+EOF  null";
+        let (tokens, has_errors) = tokenize_string(str);
+        assert_eq!(expected_tokens, tokens_as_string(&tokens));
+        assert!(!has_errors);
+    }
+
+    #[test]
+    fn test_tokenize_string_invalid() {
+        let str = "\"bar";
+        let expected_tokens = "EOF  null";
+        let (tokens, has_errors) = tokenize_string(str);
+        assert_eq!(expected_tokens, tokens_as_string(&tokens));
+        assert!(has_errors);
     }
 
     fn tokens_as_string(tokens: &[Token]) -> String {
