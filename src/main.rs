@@ -1,6 +1,7 @@
 use std::env;
 use std::fs;
 use std::fmt::{Display, Formatter};
+use std::process::exit;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -24,9 +25,12 @@ fn main() {
 fn tokenize_command(filename: &str) {
     let file_contents = fs::read_to_string(filename)
         .expect(&format!("failed to read file {filename}"));
-    let tokens = tokenize_string(&file_contents);
+    let (tokens, has_errors) = tokenize_string(&file_contents);
     for token in tokens {
         println!("{token}");
+    }
+    if has_errors {
+        exit(65)
     }
 }
 
@@ -69,11 +73,12 @@ impl Display for Token {
     }
 }
 
-fn tokenize_string(str: &str) -> Vec<Token> {
+fn tokenize_string(str: &str) -> (Vec<Token>, bool) {
     let chars = str.chars().collect::<Vec<_>>();
     let mut row = 1usize;
     let mut col = 1usize;
     let mut tokens = vec![];
+    let mut has_errors = false;
     for index in 0..chars.len() {
         let char = chars[index];
         if char == '\n' {
@@ -110,7 +115,10 @@ fn tokenize_string(str: &str) -> Vec<Token> {
         }
 
         match char {
-            _ => panic!("Unexpected character {char} code {:X} at char position {row}:{col}", char as u32),
+            _ => {
+                eprintln!("[line {row}] Error: Unexpected character: {char}");
+                has_errors = true;
+            },
         }
     }
     let eof = Token {
@@ -121,7 +129,7 @@ fn tokenize_string(str: &str) -> Vec<Token> {
         col: if col == 1 { 1 } else { col + 1 },
     };
     tokens.push(eof);
-    tokens
+    (tokens, has_errors)
 }
 
 #[cfg(test)]
@@ -132,8 +140,9 @@ mod test {
     fn test_tokenize_empty() {
         let str = "";
         let expected_tokens = "EOF  null";
-        let tokens = tokenize_string(str);
+        let (tokens, has_errors) = tokenize_string(str);
         assert_eq!(expected_tokens, tokens_as_string(&tokens));
+        assert!(!has_errors);
     }
 
     #[test]
@@ -143,8 +152,9 @@ mod test {
 LEFT_PAREN ( null
 RIGHT_PAREN ) null
 EOF  null";
-        let tokens = tokenize_string(str);
+        let (tokens, has_errors) = tokenize_string(str);
         assert_eq!(expected_tokens, tokens_as_string(&tokens));
+        assert!(!has_errors);
     }
 
     #[test]
@@ -155,8 +165,9 @@ LEFT_BRACE { null
 RIGHT_BRACE } null
 RIGHT_BRACE } null
 EOF  null";
-        let tokens = tokenize_string(str);
+        let (tokens, has_errors) = tokenize_string(str);
         assert_eq!(expected_tokens, tokens_as_string(&tokens));
+        assert!(!has_errors);
     }
 
     #[test]
@@ -175,8 +186,9 @@ MINUS - null
 SEMICOLON ; null
 SLASH / null
 EOF  null";
-        let tokens = tokenize_string(str);
+        let (tokens, has_errors) = tokenize_string(str);
         assert_eq!(expected_tokens, tokens_as_string(&tokens));
+        assert!(!has_errors);
     }
 
     fn tokens_as_string(tokens: &[Token]) -> String {
