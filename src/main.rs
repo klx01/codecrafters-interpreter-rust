@@ -59,6 +59,7 @@ enum TokenKind {
     GREATER_EQUAL,
     STRING,
     NUMBER,
+    IDENTIFIER,
 }
 
 #[derive(Debug, PartialEq)]
@@ -215,6 +216,24 @@ fn tokenize_string(str: &str) -> (Vec<Token>, bool) {
             continue;
         }
 
+        if is_identifier_char(char) {
+            let mut code = String::from(char);
+            while (index < len) && is_identifier_char(chars[index]) {
+                code.push(chars[index]);
+                index += 1;
+                col += 1;
+            }
+            let token = Token{
+                kind: TokenKind::IDENTIFIER,
+                code,
+                literal: None,
+                row,
+                col,
+            };
+            tokens.push(token);
+            continue;
+        }
+
         eprintln!("[line {row}] Error: Unexpected character: {char}");
         has_errors = true;
     }
@@ -227,6 +246,10 @@ fn tokenize_string(str: &str) -> (Vec<Token>, bool) {
     };
     tokens.push(eof);
     (tokens, has_errors)
+}
+
+fn is_identifier_char(char: char) -> bool {
+    char.is_ascii_alphanumeric() || (char == '_')
 }
 
 #[cfg(test)]
@@ -396,6 +419,18 @@ EOF  null";
         let str = "1234.1234.";
         let expected_tokens = "NUMBER 1234.1234 1234.1234
 DOT . null
+EOF  null";
+        let (tokens, has_errors) = tokenize_string(str);
+        assert_eq!(expected_tokens, tokens_as_string(&tokens));
+        assert!(!has_errors);
+    }
+
+    #[test]
+    fn test_tokenize_identifiers() {
+        let str = "foo bar _hello";
+        let expected_tokens = "IDENTIFIER foo null
+IDENTIFIER bar null
+IDENTIFIER _hello null
 EOF  null";
         let (tokens, has_errors) = tokenize_string(str);
         assert_eq!(expected_tokens, tokens_as_string(&tokens));
