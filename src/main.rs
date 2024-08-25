@@ -58,6 +58,7 @@ enum TokenKind {
     GREATER,
     GREATER_EQUAL,
     STRING,
+    NUMBER,
 }
 
 #[derive(Debug, PartialEq)]
@@ -151,6 +152,38 @@ fn tokenize_string(str: &str) -> (Vec<Token>, bool) {
         };
         if let Some(kind) = char_token_kind {
             let token = Token{ kind, code: char.to_string(), literal: None, row, col };
+            tokens.push(token);
+            continue;
+        }
+
+        if char.is_ascii_digit() {
+            let mut code = String::from(char);
+            let mut has_dot = false;
+            while
+                (index < len)
+                && (
+                    chars[index].is_ascii_digit()
+                    || (!has_dot && chars[index] == '.')
+                )
+            {
+                if chars[index] == '.' {
+                    has_dot = true;
+                }
+                code.push(chars[index]);
+                index += 1;
+                col += 1;
+            }
+            let mut literal = code.clone();
+            if !has_dot {
+                literal.push_str(".0");
+            }
+            let token = Token{
+                kind: TokenKind::NUMBER,
+                code,
+                literal: Some(literal),
+                row,
+                col,
+            };
             tokens.push(token);
             continue;
         }
@@ -346,6 +379,27 @@ EOF  null";
         let (tokens, has_errors) = tokenize_string(str);
         assert_eq!(expected_tokens, tokens_as_string(&tokens));
         assert!(has_errors);
+    }
+
+    #[test]
+    fn test_tokenize_number_no_dot() {
+        let str = "42";
+        let expected_tokens = "NUMBER 42 42.0
+EOF  null";
+        let (tokens, has_errors) = tokenize_string(str);
+        assert_eq!(expected_tokens, tokens_as_string(&tokens));
+        assert!(!has_errors);
+    }
+
+    #[test]
+    fn test_tokenize_number_with_dot() {
+        let str = "1234.1234.";
+        let expected_tokens = "NUMBER 1234.1234 1234.1234
+DOT . null
+EOF  null";
+        let (tokens, has_errors) = tokenize_string(str);
+        assert_eq!(expected_tokens, tokens_as_string(&tokens));
+        assert!(!has_errors);
     }
 
     fn tokens_as_string(tokens: &[Token]) -> String {
