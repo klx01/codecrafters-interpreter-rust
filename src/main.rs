@@ -38,6 +38,10 @@ enum TokenKind {
     RIGHT_PAREN,
     LEFT_BRACE,
     RIGHT_BRACE,
+    STAR,
+    DOT,
+    COMMA,
+    PLUS,
 }
 #[derive(Debug, PartialEq)]
 struct Token {
@@ -74,14 +78,18 @@ fn tokenize_string(str: &str) -> Vec<Token> {
         } else {
             col += 1;
         }
-        
+
         let char_token_kind = match char {
             '(' => Some(TokenKind::LEFT_PAREN),
             ')' => Some(TokenKind::RIGHT_PAREN),
             '{' => Some(TokenKind::LEFT_BRACE),
             '}' => Some(TokenKind::RIGHT_BRACE),
+            '*' => Some(TokenKind::STAR),
+            '.' => Some(TokenKind::DOT),
+            ',' => Some(TokenKind::COMMA),
+            '+' => Some(TokenKind::PLUS),
             _ => None,
-        }; 
+        };
         if let Some(kind) = char_token_kind {
             let token = Token{
                 kind,
@@ -139,6 +147,23 @@ EOF  null";
 LEFT_BRACE { null
 RIGHT_BRACE } null
 RIGHT_BRACE } null
+EOF  null";
+        let tokens = tokenize_string(str);
+        assert_eq!(expected_tokens, tokens_as_string(&tokens));
+    }
+
+    #[test]
+    fn test_tokenize_chars() {
+        let str = "({*.,+*})";
+        let expected_tokens = "LEFT_PAREN ( null
+LEFT_BRACE { null
+STAR * null
+DOT . null
+COMMA , null
+PLUS + null
+STAR * null
+RIGHT_BRACE } null
+RIGHT_PAREN ) null
 EOF  null";
         let tokens = tokenize_string(str);
         assert_eq!(expected_tokens, tokens_as_string(&tokens));
