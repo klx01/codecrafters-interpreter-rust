@@ -158,30 +158,32 @@ fn tokenize_string(str: &str) -> (Vec<Token>, bool) {
         }
 
         if char.is_ascii_digit() {
-            let mut code = String::from(char);
-            let mut has_dot = false;
-            while
-                (index < len)
-                && (
-                    chars[index].is_ascii_digit()
-                    || (!has_dot && chars[index] == '.')
-                )
-            {
-                if chars[index] == '.' {
-                    has_dot = true;
-                }
-                code.push(chars[index]);
+            let mut integer = String::from(char);
+            while (index < len) && chars[index].is_ascii_digit() {
+                integer.push(chars[index]);
                 index += 1;
                 col += 1;
             }
-            let mut literal = code.clone();
-            if !has_dot {
-                literal.push_str(".0");
+            let mut fraction = String::new();
+            if (index < len) && (chars[index] == '.') {
+                index += 1;
+                col += 1;
+                while (index < len) && chars[index].is_ascii_digit() {
+                    fraction.push(chars[index]);
+                    index += 1;
+                    col += 1;
+                }
+                if fraction.is_empty() {
+                    index -= 1;
+                    col -= 1;
+                }
             }
+
+            let fraction_trimmed = fraction.trim_end_matches('0');
             let token = Token{
                 kind: TokenKind::NUMBER,
-                code,
-                literal: Some(literal),
+                code: if fraction.is_empty() { integer.clone() } else { format!("{integer}.{fraction}") },
+                literal: Some(format!("{integer}.{}", if fraction_trimmed.is_empty() { "0" } else { fraction_trimmed })),
                 row,
                 col,
             };
@@ -418,6 +420,20 @@ EOF  null";
     fn test_tokenize_number_with_dot() {
         let str = "1234.1234.";
         let expected_tokens = "NUMBER 1234.1234 1234.1234
+DOT . null
+EOF  null";
+        let (tokens, has_errors) = tokenize_string(str);
+        assert_eq!(expected_tokens, tokens_as_string(&tokens));
+        assert!(!has_errors);
+    }
+
+    #[test]
+    fn test_tokenize_number_edge_cases() {
+        let str = "200.00 .456 123. ";
+        let expected_tokens = "NUMBER 200.00 200.0
+DOT . null
+NUMBER 456 456.0
+NUMBER 123 123.0
 DOT . null
 EOF  null";
         let (tokens, has_errors) = tokenize_string(str);
