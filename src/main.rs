@@ -51,6 +51,8 @@ enum TokenKind {
     SLASH,
     EQUAL_EQUAL,
     EQUAL,
+    BANG,
+    BANG_EQUAL,
 }
 
 #[derive(Debug, PartialEq)]
@@ -96,6 +98,7 @@ fn tokenize_string(str: &str) -> (Vec<Token>, bool) {
         if let Some(next) = chars.get(index) {
             let matched_kind = match (char, next) {
                 ('=', '=') => Some(TokenKind::EQUAL_EQUAL),
+                ('!', '=') => Some(TokenKind::BANG_EQUAL),
                 _ => None,
             };
             if let Some(kind) = matched_kind {
@@ -120,6 +123,7 @@ fn tokenize_string(str: &str) -> (Vec<Token>, bool) {
             ';' => Some(TokenKind::SEMICOLON),
             '/' => Some(TokenKind::SLASH),
             '=' => Some(TokenKind::EQUAL),
+            '!' => Some(TokenKind::BANG),
             _ => None,
         };
         if let Some(kind) = char_token_kind {
@@ -213,6 +217,18 @@ LEFT_BRACE { null
 EQUAL_EQUAL == null
 EQUAL = null
 RIGHT_BRACE } null
+EOF  null";
+        let (tokens, has_errors) = tokenize_string(str);
+        assert_eq!(expected_tokens, tokens_as_string(&tokens));
+        assert!(!has_errors);
+    }
+
+    #[test]
+    fn test_tokenize_neg() {
+        let str = "!!===";
+        let expected_tokens = "BANG ! null
+BANG_EQUAL != null
+EQUAL_EQUAL == null
 EOF  null";
         let (tokens, has_errors) = tokenize_string(str);
         assert_eq!(expected_tokens, tokens_as_string(&tokens));
