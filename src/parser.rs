@@ -101,84 +101,37 @@ pub(crate) fn parse_expression_from_string(str: &str) -> Option<Expression> {
 }
 
 fn parse_expression<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Expression, &'a [Token])> {
-    parse_equality(tail, parent)
+    parse_binary_expression(tail, parent, 4)
 }
 
-fn parse_equality<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Expression, &'a [Token])> {
-    let (mut left, mut tail) = parse_comparison(tail, parent)?;
-    loop {
-        let Some((next, tail2)) = tail.split_first() else {
-            break;
-        };
-        let op = match next.kind {
-            TokenKind::EQUAL_EQUAL => BinaryOperator::Equal,
-            TokenKind::BANG_EQUAL => BinaryOperator::NotEqual,
-            _ => break,
-        };
-        tail = tail2;
-        let (right, tail2) = parse_comparison(tail, Some(next))?;
-        tail = tail2;
-        let expr = BinaryExpression{ op, left, right };
-        left = Expression::Binary(Box::new(expr));
+fn parse_binary_expression<'a>(tail: &'a [Token], parent: Option<&'a Token>, parent_priority: u8) -> Option<(Expression, &'a [Token])> {
+    if parent_priority == 0 {
+        return parse_operand(tail, parent);
     }
-    Some((left, tail))
-}
-
-fn parse_comparison<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Expression, &'a [Token])> {
-    let (mut left, mut tail) = parse_term(tail, parent)?;
+    let current_priority = parent_priority - 1;
+    let (mut left, mut tail) = parse_binary_expression(tail, parent, current_priority)?;
     loop {
         let Some((next, tail2)) = tail.split_first() else {
             break;
         };
-        let op = match next.kind {
-            TokenKind::LESS => BinaryOperator::Less,
-            TokenKind::LESS_EQUAL => BinaryOperator::LessOrEqual,
-            TokenKind::GREATER => BinaryOperator::Greater,
-            TokenKind::GREATER_EQUAL => BinaryOperator::GreaterOrEqual,
+        let (op, priority) = match next.kind {
+            TokenKind::EQUAL_EQUAL => (BinaryOperator::Equal, 3),
+            TokenKind::BANG_EQUAL => (BinaryOperator::NotEqual, 3),
+            TokenKind::LESS => (BinaryOperator::Less, 2),
+            TokenKind::LESS_EQUAL => (BinaryOperator::LessOrEqual, 2),
+            TokenKind::GREATER => (BinaryOperator::Greater, 2),
+            TokenKind::GREATER_EQUAL => (BinaryOperator::GreaterOrEqual, 2),
+            TokenKind::PLUS => (BinaryOperator::Plus, 1),
+            TokenKind::MINUS => (BinaryOperator::Minus, 1),
+            TokenKind::STAR => (BinaryOperator::Multiply, 0),
+            TokenKind::SLASH => (BinaryOperator::Divide, 0),
             _ => break,
         };
-        tail = tail2;
-        let (right, tail2) = parse_term(tail, Some(next))?;
-        tail = tail2;
-        let expr = BinaryExpression{ op, left, right };
-        left = Expression::Binary(Box::new(expr));
-    }
-    Some((left, tail))
-}
-
-fn parse_term<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Expression, &'a [Token])> {
-    let (mut left, mut tail) = parse_factor(tail, parent)?;
-    loop {
-        let Some((next, tail2)) = tail.split_first() else {
+        if priority != current_priority {
             break;
-        };
-        let op = match next.kind {
-            TokenKind::PLUS => BinaryOperator::Plus,
-            TokenKind::MINUS => BinaryOperator::Minus,
-            _ => break,
-        };
+        }
         tail = tail2;
-        let (right, tail2) = parse_factor(tail, Some(next))?;
-        tail = tail2;
-        let expr = BinaryExpression{ op, left, right };
-        left = Expression::Binary(Box::new(expr));
-    }
-    Some((left, tail))
-}
-
-fn parse_factor<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Expression, &'a [Token])> {
-    let (mut left, mut tail) = parse_operand(tail, parent)?;
-    loop {
-        let Some((next, tail2)) = tail.split_first() else {
-            break;
-        };
-        let op = match next.kind {
-            TokenKind::STAR => BinaryOperator::Multiply,
-            TokenKind::SLASH => BinaryOperator::Divide,
-            _ => break,
-        };
-        tail = tail2;
-        let (right, tail2) = parse_operand(tail, Some(next))?;
+        let (right, tail2) = parse_binary_expression(tail, Some(next), current_priority)?;
         tail = tail2;
         let expr = BinaryExpression{ op, left, right };
         left = Expression::Binary(Box::new(expr));
