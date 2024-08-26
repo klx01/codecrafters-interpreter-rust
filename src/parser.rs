@@ -278,4 +278,10 @@ mod test {
         assert_eq!("(< (< 83.0 99.0) 115.0)", parse_expression_from_string("83 < 99 < 115").unwrap().to_string());
         assert_eq!("(== baz baz)", parse_expression_from_string("\"baz\" == \"baz\"").unwrap().to_string());
     }
+
+    #[test]
+    fn test_parse_priority() {
+        assert_eq!("(- (+ 1.0 (/ (* 2.0 3.0) 4.0)) 5.0)", parse_expression_from_string("1 + 2 * 3 / 4 - 5").unwrap().to_string());
+        assert_eq!("(== (> (+ 3.0 2.0) 5.0) (>= 3.0 (+ 2.0 2.0)))", parse_expression_from_string("3 + 2 > 5 == 3 >= 2 + 2").unwrap().to_string());
+    }
 }
