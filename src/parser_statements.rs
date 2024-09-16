@@ -53,6 +53,7 @@ pub(crate) fn parse_statement_from_string(str: &str) -> Option<Statement> {
 }
 
 fn parse_statement(tail: &[Token]) -> Option<(Statement, &[Token])> {
+    let orig_tail = tail;
     let Some((head, tail)) = tail.split_first() else {
         eprintln!("Unexpected end of token stream, expected start of a statement");
         return None;
@@ -64,6 +65,13 @@ fn parse_statement(tail: &[Token]) -> Option<(Statement, &[Token])> {
             let (expr, tail) = parse_expression(tail, None)?;
             let tail = check_statement_terminated(tail, loc)?;
             Some((Statement { body: StatementBody::Print(expr), loc }, tail))
+        },
+        TokenKind::NUMBER | TokenKind::STRING  
+            | TokenKind::NIL | TokenKind::TRUE | TokenKind::FALSE
+            | TokenKind::LEFT_PAREN | TokenKind::MINUS | TokenKind::BANG => {
+            let (_expr, tail) = parse_expression(orig_tail, None)?;
+            let tail = check_statement_terminated(tail, loc)?;
+            Some((Statement { body: StatementBody::Nop, loc }, tail))
         },
         _ => {
             eprintln!("Unexpected token {head} at {loc}, expected a start of a statement");
