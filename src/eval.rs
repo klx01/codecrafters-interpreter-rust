@@ -24,6 +24,7 @@ fn eval_statement(statement: Statement) -> Option<()> {
     match statement.body {
         StatementBody::Nop => {},
         StatementBody::Print(expr) => println!("{}", eval_expr(expr)?),
+        StatementBody::Expression(expr) => { eval_expr(expr)?; () },
     }
     Some(())
 }
