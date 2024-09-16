@@ -70,7 +70,7 @@ fn parse_statement(tail: &[Token]) -> Option<(Statement, &[Token])> {
             let tail = check_statement_terminated(tail, loc)?;
             Some((Statement { body: StatementBody::Print(expr), loc }, tail))
         },
-        TokenKind::NUMBER | TokenKind::STRING
+        TokenKind::NUMBER | TokenKind::STRING | TokenKind::IDENTIFIER
             | TokenKind::NIL | TokenKind::TRUE | TokenKind::FALSE
             | TokenKind::LEFT_PAREN | TokenKind::MINUS | TokenKind::BANG => {
             let (expr, tail) = parse_expression(orig_tail, None)?;
@@ -160,7 +160,7 @@ mod test {
         assert!(parse_statement_from_string("var x = (;").is_none());
         assert!(parse_statement_from_string("var x = ;").is_none());
         assert!(parse_statement_from_string("var x y+1;").is_none());
-        assert!(parse_statement_from_string("x = y+1;").is_none());
+        assert_eq!("(= var(x) (+ var(y) 1.0));", parse_statement_from_string("x = y+1;").unwrap().to_string());
         assert!(parse_statement_from_string("var = y+1;").is_none());
         assert_eq!("var x = nil;", parse_statement_from_string("var x;").unwrap().to_string());
     }
