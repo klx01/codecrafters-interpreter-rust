@@ -1,9 +1,11 @@
 mod tokenizer;
 mod parser;
+mod eval;
 
 use std::fs;
 use std::process::exit;
 use std::env;
+use crate::eval::evaluate_expr_from_string;
 use crate::parser::parse_expression_from_string;
 use crate::tokenizer::tokenize_string;
 
@@ -20,6 +22,7 @@ fn main() {
     match command.as_str() {
         "tokenize" => tokenize_command(filename),
         "parse" => parse_command(filename),
+        "evaluate" => evaluate_command(filename),
         _ => {
             eprintln!("Unknown command: {}", command);
             return;
@@ -43,6 +46,16 @@ fn parse_command(filename: &str) {
     let file_contents = fs::read_to_string(filename)
         .expect(&format!("failed to read file {filename}"));
     if let Some(expr) = parse_expression_from_string(&file_contents) {
+        println!("{expr}");
+    } else {
+        exit(65)
+    }
+}
+
+fn evaluate_command(filename: &str) {
+    let file_contents = fs::read_to_string(filename)
+        .expect(&format!("failed to read file {filename}"));
+    if let Some(expr) = evaluate_expr_from_string(&file_contents) {
         println!("{expr}");
     } else {
         exit(65)

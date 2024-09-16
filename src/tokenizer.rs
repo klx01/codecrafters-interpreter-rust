@@ -45,13 +45,23 @@ pub(crate) enum TokenKind {
     WHILE,
 }
 
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub(crate) struct Location {
+    pub row: usize,
+    pub col: usize,
+}
+impl Display for Location {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("{}:{}", self.row, self.col))
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub(crate) struct Token {
     pub kind: TokenKind,
     pub code: String,
     pub literal: Option<String>,
-    pub row: usize,
-    pub col: usize,
+    pub loc: Location,
 }
 impl Display for Token {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -73,8 +83,7 @@ pub(crate) fn tokenize_string(str: &str) -> (Vec<Token>, bool) {
         kind: TokenKind::EOF,
         code: "".to_string(),
         literal: None,
-        row: 0,
-        col: 0,
+        loc: Location{row: 0, col: 0}
     };
     tokens.push(eof);
     (tokens, has_errors)
@@ -132,7 +141,7 @@ pub(crate) fn tokenize_string_no_eof(str: &str) -> (Vec<Token>, bool) {
             if let Some(kind) = matched_kind {
                 index += 1;
                 col += 1;
-                let token = Token{ kind, code: format!("{char}{next}"), literal: None, row, col };
+                let token = Token{ kind, code: format!("{char}{next}"), literal: None, loc: Location{row, col} };
                 tokens.push(token);
                 continue;
             }
@@ -165,7 +174,7 @@ pub(crate) fn tokenize_string_no_eof(str: &str) -> (Vec<Token>, bool) {
             _ => None,
         };
         if let Some(kind) = char_token_kind {
-            let token = Token{ kind, code: char.to_string(), literal: None, row, col };
+            let token = Token{ kind, code: char.to_string(), literal: None, loc: Location{row, col} };
             tokens.push(token);
             continue;
         }
@@ -197,8 +206,7 @@ pub(crate) fn tokenize_string_no_eof(str: &str) -> (Vec<Token>, bool) {
                 kind: TokenKind::NUMBER,
                 code: if fraction.is_empty() { integer.clone() } else { format!("{integer}.{fraction}") },
                 literal: Some(format!("{integer}.{}", if fraction_trimmed.is_empty() { "0" } else { fraction_trimmed })),
-                row,
-                col,
+                loc: Location{row, col}
             };
             tokens.push(token);
             continue;
@@ -228,8 +236,7 @@ pub(crate) fn tokenize_string_no_eof(str: &str) -> (Vec<Token>, bool) {
                     kind: TokenKind::STRING,
                     code: format!("{char}{literal}{close_char}"),
                     literal: Some(literal),
-                    row,
-                    col,
+                    loc: Location{row, col}
                 };
                 tokens.push(token);
             }
@@ -247,8 +254,7 @@ pub(crate) fn tokenize_string_no_eof(str: &str) -> (Vec<Token>, bool) {
                 kind: reserved.get(code.as_str()).cloned().unwrap_or(TokenKind::IDENTIFIER),
                 code,
                 literal: None,
-                row,
-                col,
+                loc: Location{row, col}
             };
             tokens.push(token);
             continue;

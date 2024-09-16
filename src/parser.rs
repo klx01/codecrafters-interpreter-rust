@@ -1,40 +1,59 @@
 use std::fmt::{Display, Formatter};
-use crate::tokenizer::{tokenize_string_no_eof, Token, TokenKind};
+use crate::tokenizer::{tokenize_string_no_eof, Location, Token, TokenKind};
 
 #[derive(Debug)]
-pub(crate) enum Expression {
+pub(crate) enum ExpressionBody {
     Literal(Literal),
     Unary(Box<UnaryExpression>),
     Binary(Box<BinaryExpression>),
     Grouping(Box<Expression>),
 }
+#[derive(Debug)]
+pub(crate) struct Expression {
+    pub body: ExpressionBody,
+    pub loc: Location,
+}
 
-impl Display for Expression {
+impl Display for ExpressionBody {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Expression::Literal(lit) => match lit {
-                Literal::Number(n) => f.write_str(n),
-                Literal::String(s) => f.write_str(s),
-                Literal::Bool(b) => f.write_fmt(format_args!("{b}")),
-                Literal::Nil => f.write_str("nil"),
-            }
-            Expression::Grouping(inner) => f.write_fmt(format_args!("(group {inner})")),
-            Expression::Unary(ex) => f.write_fmt(format_args!("({} {})", ex.op, ex.ex)),
-            Expression::Binary(ex) => f.write_fmt(format_args!("({} {} {})", ex.op, ex.left, ex.right)),
+            ExpressionBody::Literal(lit) => f.write_fmt(format_args!("{lit}")),
+            ExpressionBody::Grouping(inner) => f.write_fmt(format_args!("(group {inner})")),
+            ExpressionBody::Unary(ex) => f.write_fmt(format_args!("({} {})", ex.op, ex.ex)),
+            ExpressionBody::Binary(ex) => f.write_fmt(format_args!("({} {} {})", ex.op, ex.left, ex.right)),
         }
+    }
+}
+impl Display for Expression {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("{}", self.body))
     }
 }
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum Literal {
-    Number(String),
+    Number(f64),
     String(String),
     Bool(bool),
     Nil,
 }
+impl Display for Literal {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Literal::Number(n) => if n.fract() > 0.0 {
+                f.write_fmt(format_args!("{n}"))
+            } else {
+                f.write_fmt(format_args!("{n}.0"))
+            },
+            Literal::String(s) => f.write_str(s),
+            Literal::Bool(b) => f.write_fmt(format_args!("{b}")),
+            Literal::Nil => f.write_str("nil"),
+        }
+    }
+}
 
 #[derive(Debug, PartialEq, Copy, Clone)]
-enum UnaryOperator {
+pub(crate) enum UnaryOperator {
     Minus,
     Not,
 }
@@ -49,12 +68,12 @@ impl Display for UnaryOperator {
 
 #[derive(Debug)]
 pub(crate) struct UnaryExpression {
-    op: UnaryOperator,
-    ex: Expression,
+    pub op: UnaryOperator,
+    pub ex: Expression,
 }
 
 #[derive(Debug, PartialEq, Copy, Clone)]
-enum BinaryOperator {
+pub(crate) enum BinaryOperator {
     Equal,
     NotEqual,
     Less,
@@ -85,9 +104,9 @@ impl Display for BinaryOperator {
 
 #[derive(Debug)]
 pub(crate) struct BinaryExpression {
-    op: BinaryOperator,
-    left: Expression,
-    right: Expression,
+    pub op: BinaryOperator,
+    pub left: Expression,
+    pub right: Expression,
 }
 
 pub(crate) fn parse_expression_from_string(str: &str) -> Option<Expression> {
@@ -133,8 +152,10 @@ fn parse_binary_expression<'a>(tail: &'a [Token], parent: Option<&'a Token>, par
         tail = tail2;
         let (right, tail2) = parse_binary_expression(tail, Some(next), current_priority)?;
         tail = tail2;
+        let loc = left.loc;
         let expr = BinaryExpression{ op, left, right };
-        left = Expression::Binary(Box::new(expr));
+        let expr = ExpressionBody::Binary(Box::new(expr));
+        left = Expression{body: expr, loc };
     }
     Some((left, tail))
 }
@@ -144,10 +165,9 @@ fn parse_operand<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Ex
         match parent {
             None => eprintln!("empty input"),
             Some(parent) => eprintln!(
-                "Unexpectedly reached the end of the token stream when parsing {:?} at {}:{}",
+                "Unexpectedly reached the end of the token stream when parsing {:?} at {}",
                 parent.kind,
-                parent.row,
-                parent.col,
+                parent.loc,
             ),
         }
         return None;
@@ -157,32 +177,37 @@ fn parse_operand<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Ex
         TokenKind::NIL => Some(Literal::Nil),
         TokenKind::FALSE => Some(Literal::Bool(false)),
         TokenKind::TRUE => Some(Literal::Bool(true)),
-        TokenKind::NUMBER => Some(Literal::Number(token.literal.clone().expect("got a literal token without literal value"))), // todo: check if we can remove copying her)e
-        TokenKind::STRING => Some(Literal::String(token.literal.clone().expect("got a literal token without literal value"))),
+        TokenKind::NUMBER => Some(Literal::Number(
+            token.literal.as_ref()
+                .expect("got a literal token without literal value")
+                .parse()
+                .expect("got an invalid numeric literal")
+        )),
+        TokenKind::STRING => Some(Literal::String(token.literal.clone().expect("got a literal token without literal value"))), // todo: check if we can remove copying her)e
         _ => None,
     };
     if let Some(literal) = literal {
-        return Some((Expression::Literal(literal), tail));
+        let body = ExpressionBody::Literal(literal);
+        return Some((Expression{ body, loc: token.loc }, tail));
     }
 
     if token.kind == TokenKind::LEFT_PAREN {
         let (inner, tail) = parse_expression(tail, Some(token))?;
         let Some((next, tail)) = tail.split_first() else {
-            eprintln!("Parenthesis that was opened at {}:{} is never closed", token.row, token.col);
+            eprintln!("Parenthesis that was opened at {} is never closed", token.loc);
             return None;
         };
         if next.kind != TokenKind::RIGHT_PAREN {
             eprintln!(
-                "Expected closing parenthesis at {}:{}, got {:?} instead. Parenthesis was opened at {}:{}",
-                next.row,
-                next.col,
+                "Expected closing parenthesis at {}, got {:?} instead. Parenthesis was opened at {}",
+                next.loc,
                 next.kind,
-                token.row,
-                token.col,
+                token.loc,
             );
             return None;
         }
-        return Some((Expression::Grouping(Box::new(inner)), tail));
+        let body = ExpressionBody::Grouping(Box::new(inner));
+        return Some((Expression{body, loc: token.loc}, tail));
     }
 
     let unary_op = match token.kind {
@@ -193,10 +218,11 @@ fn parse_operand<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Ex
     if let Some(op) = unary_op {
         let (inner, tail) = parse_operand(tail, Some(token))?;
         let expr = UnaryExpression{ op, ex: inner };
-        return Some((Expression::Unary(Box::new(expr)), tail));
+        let body = ExpressionBody::Unary(Box::new(expr));
+        return Some((Expression{ body, loc: token.loc }, tail));
     }
 
-    eprintln!("Unexpected token kind {:?} at {}:{}", token.kind, token.row, token.col);
+    eprintln!("Unexpected token kind {:?} at {}", token.kind, token.loc);
     None
 }
 
