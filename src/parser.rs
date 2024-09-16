@@ -17,6 +17,7 @@ pub(crate) struct Expression {
 impl Display for ExpressionBody {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
+            ExpressionBody::Literal(Literal::Number(n)) if n.fract() == 0.0 => f.write_fmt(format_args!("{n}.0")),
             ExpressionBody::Literal(lit) => f.write_fmt(format_args!("{lit}")),
             ExpressionBody::Grouping(inner) => f.write_fmt(format_args!("(group {inner})")),
             ExpressionBody::Unary(ex) => f.write_fmt(format_args!("({} {})", ex.op, ex.ex)),
@@ -40,11 +41,7 @@ pub(crate) enum Literal {
 impl Display for Literal {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Literal::Number(n) => if n.fract() > 0.0 {
-                f.write_fmt(format_args!("{n}"))
-            } else {
-                f.write_fmt(format_args!("{n}.0"))
-            },
+            Literal::Number(n) => f.write_fmt(format_args!("{n}")),
             Literal::String(s) => f.write_str(s),
             Literal::Bool(b) => f.write_fmt(format_args!("{b}")),
             Literal::Nil => f.write_str("nil"),

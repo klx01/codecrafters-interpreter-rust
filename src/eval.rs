@@ -151,7 +151,7 @@ mod test {
         assert_eq!("10.4", res.unwrap().to_string());
         let res = evaluate_expr_from_string("10");
         assert_eq!(Some(Literal::Number(10.0)), res);
-        assert_eq!("10.0", res.unwrap().to_string());
+        assert_eq!("10", res.unwrap().to_string());
         
         let res = evaluate_expr_from_string("((false))");
         assert_eq!(Some(Literal::Bool(false)), res);
