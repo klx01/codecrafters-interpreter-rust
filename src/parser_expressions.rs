@@ -8,6 +8,7 @@ pub(crate) enum ExpressionBody {
     Binary(Box<BinaryExpression>),
     Grouping(Box<Expression>),
     Variable(String),
+    Assignment(Box<AssignmentExpression>),
 }
 #[derive(Debug)]
 pub(crate) struct Expression {
@@ -24,6 +25,7 @@ impl Display for ExpressionBody {
             ExpressionBody::Unary(ex) => f.write_fmt(format_args!("({} {})", ex.op, ex.ex)),
             ExpressionBody::Binary(ex) => f.write_fmt(format_args!("({} {} {})", ex.op, ex.left, ex.right)),
             ExpressionBody::Variable(name) => f.write_fmt(format_args!("var({name})")),
+            ExpressionBody::Assignment(ass) => f.write_fmt(format_args!("(= var({}) {})", ass.var, ass.expr)),
         }
     }
 }
@@ -108,6 +110,12 @@ pub(crate) struct BinaryExpression {
     pub right: Expression,
 }
 
+#[derive(Debug)]
+pub(crate) struct AssignmentExpression {
+    pub var: String,
+    pub expr: Expression,
+}
+
 pub(crate) fn parse_expression_from_string(str: &str) -> Option<Expression> {
     // todo: how should we handle token errors?
     let (tokens, _has_errors) = tokenize_string_no_eof(str);
@@ -119,6 +127,29 @@ pub(crate) fn parse_expression_from_string(str: &str) -> Option<Expression> {
 }
 
 pub(crate) fn parse_expression<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Expression, &'a [Token])> {
+    parse_assignment(tail, parent)
+}
+
+fn parse_assignment<'a>(mut tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Expression, &'a [Token])> {
+    if let Some((left, tail2)) = parse_operand(tail, parent) {
+        match left.body {
+            ExpressionBody::Variable(var) => {
+                if let Some((next, tail2)) = tail2.split_first() {
+                    if next.kind == TokenKind::EQUAL {
+                        tail = tail2;
+                        let (right, tail2) = parse_assignment(tail, Some(next))?;
+                        tail = tail2;
+                        let loc = left.loc;
+                        let expr = AssignmentExpression{ var, expr: right };
+                        let expr = ExpressionBody::Assignment(Box::new(expr));
+                        let expr = Expression{ body: expr, loc };
+                        return Some((expr, tail));
+                    }
+                };
+            }
+            _ => {},
+        }
+    };
     parse_binary_expression(tail, parent, 4)
 }
 
@@ -171,7 +202,7 @@ fn parse_operand<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Ex
         }
         return None;
     };
-    
+
     match token.kind {
         TokenKind::IDENTIFIER => {
             let body = ExpressionBody::Variable(token.code.clone()); // todo: check if we can remove copying here
@@ -270,5 +301,10 @@ mod test {
     fn test_parse_priority() {
         assert_eq!("(- (+ 1.0 (/ (* 2.0 3.0) 4.0)) 5.0)", parse_expression_from_string("1 + 2 * 3 / 4 - 5").unwrap().to_string());
         assert_eq!("(== (> (+ 3.0 2.0) 5.0) (>= 3.0 (+ 2.0 2.0)))", parse_expression_from_string("3 + 2 > 5 == 3 >= 2 + 2").unwrap().to_string());
+
+        assert_eq!("(+ (+ (+ (+ var(a) var(b)) var(c)) 1.0) 2.0)", parse_expression_from_string("a + b + c + 1 + 2").unwrap().to_string());
+        assert_eq!("(= var(a) (= var(b) (= var(c) (+ 1.0 2.0))))", parse_expression_from_string("a = b = c = 1 + 2").unwrap().to_string());
+        assert_eq!("1.0", parse_expression_from_string("1 = a").unwrap().to_string());
+        assert_eq!("(+ 1.0 var(a))", parse_expression_from_string("1 + a = 1").unwrap().to_string());
     }
 }

@@ -26,8 +26,8 @@ pub(crate) struct Memory {
 
 pub(crate) fn evaluate_expr_from_string(str: &str) -> Option<Literal> {
     let expr = parse_expression_from_string(str)?;
-    let memory = Memory::default();
-    let result = eval_expr(expr, &memory)?;
+    let mut memory = Memory::default();
+    let result = eval_expr(expr, &mut memory)?;
     Some(result)
 }
 
@@ -63,7 +63,7 @@ fn eval_statement(statement: Statement, memory: &mut Memory) -> Option<()> {
     Some(())
 }
 
-fn eval_expr(expr: Expression, memory: &Memory) -> Option<Literal> {
+fn eval_expr(expr: Expression, memory: &mut Memory) -> Option<Literal> {
     let loc = expr.loc;
     match expr.body {
         ExpressionBody::Literal(x) => Some(x),
@@ -145,6 +145,12 @@ fn eval_expr(expr: Expression, memory: &Memory) -> Option<Literal> {
                 None
             }
         }
+        ExpressionBody::Assignment(expr) => {
+            let name = expr.var;
+            let value = eval_expr(expr.expr, memory)?;
+            memory.variables.insert(name, value.clone());
+            Some(value)
+        },
     }
 }
 
@@ -293,5 +299,11 @@ mod test {
         let res = evaluate_statements_list_from_string(statements, &mut memory);
         assert_eq!(EvalResult::Ok, res);
         assert_eq!("5", memory.variables.get("a").unwrap().to_string());
+        
+        let statements = "var b = a = a * 3;";
+        let res = evaluate_statements_list_from_string(statements, &mut memory);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("15", memory.variables.get("b").unwrap().to_string());
+        assert_eq!("15", memory.variables.get("a").unwrap().to_string());
     }
 }
