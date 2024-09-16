@@ -1,4 +1,3 @@
-use std::mem;
 use crate::parser::{parse_expression_from_string, BinaryOperator, Expression, ExpressionBody, Literal, UnaryOperator};
 use crate::tokenizer::Location;
 
@@ -28,10 +27,6 @@ fn eval(expr: Expression) -> Option<Literal> {
         ExpressionBody::Binary(expr) => {
             let left = eval(expr.left)?;
             let right = eval(expr.right)?;
-            if mem::discriminant(&left) != mem::discriminant(&right) {
-                eprintln!("mismatched types of values of operand {} at {loc}: {left:?} and {right:?}", expr.op);
-                return None;
-            }
             match expr.op {
                 BinaryOperator::Equal => Some(Literal::Bool(is_equal(left, right))),
                 BinaryOperator::NotEqual => Some(Literal::Bool(!is_equal(left, right))),
@@ -134,7 +129,7 @@ mod test {
         let res = evaluate_expr_from_string("false");
         assert_eq!(Some(Literal::Bool(false)), res);
         assert_eq!("false", res.unwrap().to_string());
-        
+
         let res = evaluate_expr_from_string("\"Hello, World!\"");
         assert_eq!(Some(Literal::String("Hello, World!".to_string())), res);
         assert_eq!("Hello, World!", res.unwrap().to_string());
@@ -144,12 +139,12 @@ mod test {
         let res = evaluate_expr_from_string("10");
         assert_eq!(Some(Literal::Number(10.0)), res);
         assert_eq!("10", res.unwrap().to_string());
-        
+
         let res = evaluate_expr_from_string("((false))");
         assert_eq!(Some(Literal::Bool(false)), res);
         assert_eq!("false", res.unwrap().to_string());
     }
-    
+
     #[test]
     fn test_unary() {
         assert_eq!("true", evaluate_expr_from_string("!false").unwrap().to_string());
@@ -159,21 +154,71 @@ mod test {
         assert_eq!("true", evaluate_expr_from_string("!!1").unwrap().to_string());
         assert_eq!("true", evaluate_expr_from_string("!!\"str\"").unwrap().to_string());
         assert_eq!("true", evaluate_expr_from_string("!!\"\"").unwrap().to_string());
-        
+
         assert_eq!("-73", evaluate_expr_from_string("-(73)").unwrap().to_string());
         assert_eq!(None, evaluate_expr_from_string("-false"));
     }
-    
+
     #[test]
     fn test_arithmetic() {
         assert_eq!("3", evaluate_expr_from_string("(18 * 3 / (3 * 6))").unwrap().to_string());
         assert_eq!("8.4", evaluate_expr_from_string("42 / 5").unwrap().to_string());
         assert_eq!("10.4", evaluate_expr_from_string("(10.40 * 2) / 2").unwrap().to_string());
-        
+
         assert_eq!("75", evaluate_expr_from_string("20 + 74 - (-(14 - 33))").unwrap().to_string());
         assert_eq!("5", evaluate_expr_from_string("70 - 65").unwrap().to_string());
         assert_eq!("-24", evaluate_expr_from_string("69 - 93").unwrap().to_string());
         assert_eq!("8.4", evaluate_expr_from_string("10.40 - 2").unwrap().to_string());
         assert_eq!("13", evaluate_expr_from_string("23 + 28 - (-(61 - 99))").unwrap().to_string());
+
+        assert_eq!("2", evaluate_expr_from_string("1 + 1").unwrap().to_string());
+        assert_eq!(None, evaluate_expr_from_string("1 + true"));
+        assert_eq!(None, evaluate_expr_from_string("true + 1"));
+        assert_eq!(None, evaluate_expr_from_string("true + true"));
+    }
+
+    #[test]
+    fn test_concat() {
+        assert_eq!("hello world!", evaluate_expr_from_string("\"hello\" + \" world!\"").unwrap().to_string());
+        assert_eq!("4224", evaluate_expr_from_string("\"42\" + \"24\"").unwrap().to_string());
+        assert_eq!(None, evaluate_expr_from_string("\"42\" + 24"));
+        assert_eq!(None, evaluate_expr_from_string("42 + \"24\""));
+    }
+
+    #[test]
+    fn test_comparison() {
+        assert_eq!("true", evaluate_expr_from_string("1 > 0").unwrap().to_string());
+        assert_eq!("false", evaluate_expr_from_string("1 > 1").unwrap().to_string());
+        assert_eq!("true", evaluate_expr_from_string("1 >= 1").unwrap().to_string());
+        assert_eq!("false", evaluate_expr_from_string("1 >= 2").unwrap().to_string());
+        assert_eq!("true", evaluate_expr_from_string("1 >= 0").unwrap().to_string());
+        assert_eq!("true", evaluate_expr_from_string("1 < 2").unwrap().to_string());
+        assert_eq!("false", evaluate_expr_from_string("1 < 1").unwrap().to_string());
+        assert_eq!("true", evaluate_expr_from_string("1 <= 1").unwrap().to_string());
+        assert_eq!("false", evaluate_expr_from_string("1 <= 0").unwrap().to_string());
+        assert_eq!("true", evaluate_expr_from_string("1 <= 2").unwrap().to_string());
+
+        assert_eq!(None, evaluate_expr_from_string("1 > true"));
+        assert_eq!(None, evaluate_expr_from_string("true > 1"));
+        assert_eq!(None, evaluate_expr_from_string("true > true"));
+    }
+
+    #[test]
+    fn test_equality() {
+        assert_eq!("true", evaluate_expr_from_string("nil == nil").unwrap().to_string());
+        assert_eq!("true", evaluate_expr_from_string("false == false").unwrap().to_string());
+        assert_eq!("true", evaluate_expr_from_string("true == true").unwrap().to_string());
+        assert_eq!("true", evaluate_expr_from_string("1 == 1").unwrap().to_string());
+        assert_eq!("true", evaluate_expr_from_string("\"foo\" == \"foo\"").unwrap().to_string());
+        assert_eq!("false", evaluate_expr_from_string("true == false").unwrap().to_string());
+        assert_eq!("false", evaluate_expr_from_string("nil == false").unwrap().to_string());
+        assert_eq!("false", evaluate_expr_from_string("1 == 2").unwrap().to_string());
+        assert_eq!("false", evaluate_expr_from_string("\"foo\" == \"bar\"").unwrap().to_string());
+        assert_eq!("false", evaluate_expr_from_string("1 == true").unwrap().to_string());
+        assert_eq!("false", evaluate_expr_from_string("1 == \"1\"").unwrap().to_string());
+        assert_eq!("false", evaluate_expr_from_string("\"\" == nil").unwrap().to_string());
+        assert_eq!("false", evaluate_expr_from_string("\"\" == true").unwrap().to_string());
+        assert_eq!("false", evaluate_expr_from_string("\"\" == false").unwrap().to_string());
+        assert_eq!("false", evaluate_expr_from_string("\"\" == 0").unwrap().to_string());
     }
 }
