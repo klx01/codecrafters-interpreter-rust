@@ -51,16 +51,11 @@ fn eval_statements_list(statements: Vec<Statement>, memory: &mut Memory) -> bool
 }
 
 fn eval_statement(statement: Statement, memory: &mut Memory) -> Option<()> {
-    let loc = statement.loc;
     match statement.body {
         StatementBody::Nop => {},
         StatementBody::Print(expr) => println!("{}", eval_expr(expr, memory)?),
         StatementBody::Expression(expr) => { eval_expr(expr, memory)?; () },
         StatementBody::VariableDeclaration { name, value } => {
-            if memory.variables.contains_key(&name) {
-                eprintln!("Can not re-declare variable {name} at {loc}");
-                return None;
-            }
             let value = eval_expr(value, memory)?;
             memory.variables.insert(name, value);
         },
@@ -294,9 +289,9 @@ mod test {
     #[test]
     fn test_variables() {
         let mut memory = Memory::default();
-        let statements = "var a = 1; var b = a + a +3;";
+        let statements = "var a = 1; var a = a + a +3;";
         let res = evaluate_statements_list_from_string(statements, &mut memory);
         assert_eq!(EvalResult::Ok, res);
-        assert_eq!("5", memory.variables.get("b").unwrap().to_string());
+        assert_eq!("5", memory.variables.get("a").unwrap().to_string());
     }
 }
