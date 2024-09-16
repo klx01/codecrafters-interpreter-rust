@@ -1,18 +1,39 @@
-use crate::parser::{parse_expression_from_string, BinaryOperator, Expression, ExpressionBody, Literal, UnaryOperator};
+use crate::parser_expressions::{parse_expression_from_string, BinaryOperator, Expression, ExpressionBody, Literal, UnaryOperator};
+use crate::parser_statements::{parse_statement_list_from_string, Statement, StatementBody};
 use crate::tokenizer::Location;
 
 pub(crate) fn evaluate_expr_from_string(str: &str) -> Option<Literal> {
     let expr = parse_expression_from_string(str)?;
-    let result = eval(expr)?;
+    let result = eval_expr(expr)?;
     Some(result)
 }
 
-fn eval(expr: Expression) -> Option<Literal> {
+pub(crate) fn evaluate_statements_list_from_string(str: &str) -> Option<()> {
+    let statements = parse_statement_list_from_string(str)?;
+    eval_statements_list(statements)
+}
+
+fn eval_statements_list(statements: Vec<Statement>) -> Option<()> {
+    for statement in statements {
+        eval_statement(statement)?;
+    }
+    Some(())
+}
+
+fn eval_statement(statement: Statement) -> Option<()> {
+    match statement.body {
+        StatementBody::Nop => {},
+        StatementBody::Print(expr) => println!("{}", eval_expr(expr)?),
+    }
+    Some(())
+}
+
+fn eval_expr(expr: Expression) -> Option<Literal> {
     let loc = expr.loc;
     match expr.body {
         ExpressionBody::Literal(x) => Some(x),
         ExpressionBody::Unary(expr) => {
-            let value = eval(expr.ex)?;
+            let value = eval_expr(expr.ex)?;
             match expr.op {
                 UnaryOperator::Minus => match value {
                     Literal::Number(n) => Some(Literal::Number(-n)),
@@ -25,8 +46,8 @@ fn eval(expr: Expression) -> Option<Literal> {
             }
         }
         ExpressionBody::Binary(expr) => {
-            let left = eval(expr.left)?;
-            let right = eval(expr.right)?;
+            let left = eval_expr(expr.left)?;
+            let right = eval_expr(expr.right)?;
             match expr.op {
                 BinaryOperator::Equal => Some(Literal::Bool(is_equal(left, right))),
                 BinaryOperator::NotEqual => Some(Literal::Bool(!is_equal(left, right))),
@@ -80,7 +101,7 @@ fn eval(expr: Expression) -> Option<Literal> {
                 ),
             }
         },
-        ExpressionBody::Grouping(expr) => eval(*expr),
+        ExpressionBody::Grouping(expr) => eval_expr(*expr),
     }
 }
 

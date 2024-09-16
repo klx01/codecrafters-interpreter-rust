@@ -116,7 +116,7 @@ pub(crate) fn parse_expression_from_string(str: &str) -> Option<Expression> {
     Some(expr)
 }
 
-fn parse_expression<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Expression, &'a [Token])> {
+pub(crate) fn parse_expression<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Expression, &'a [Token])> {
     parse_binary_expression(tail, parent, 4)
 }
 
