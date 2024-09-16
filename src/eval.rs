@@ -163,4 +163,17 @@ mod test {
         assert_eq!("-73", evaluate_expr_from_string("-(73)").unwrap().to_string());
         assert_eq!(None, evaluate_expr_from_string("-false"));
     }
+    
+    #[test]
+    fn test_arithmetic() {
+        assert_eq!("3", evaluate_expr_from_string("(18 * 3 / (3 * 6))").unwrap().to_string());
+        assert_eq!("8.4", evaluate_expr_from_string("42 / 5").unwrap().to_string());
+        assert_eq!("10.4", evaluate_expr_from_string("(10.40 * 2) / 2").unwrap().to_string());
+        
+        assert_eq!("75", evaluate_expr_from_string("20 + 74 - (-(14 - 33))").unwrap().to_string());
+        assert_eq!("5", evaluate_expr_from_string("70 - 65").unwrap().to_string());
+        assert_eq!("-24", evaluate_expr_from_string("69 - 93").unwrap().to_string());
+        assert_eq!("8.4", evaluate_expr_from_string("10.40 - 2").unwrap().to_string());
+        assert_eq!("13", evaluate_expr_from_string("23 + 28 - (-(61 - 99))").unwrap().to_string());
+    }
 }
