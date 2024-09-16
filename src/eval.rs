@@ -22,13 +22,7 @@ fn eval(expr: Expression) -> Option<Literal> {
                         None
                     }
                 }
-                UnaryOperator::Not => match value {
-                    Literal::Bool(b) => Some(Literal::Bool(!b)),
-                    _ => {
-                        eprintln!("operator {} can not be applied to value {value:?} at {loc}", expr.op);
-                        None
-                    }
-                }
+                UnaryOperator::Not => Some(Literal::Bool(!cast_to_bool(value))),
             }
         }
         ExpressionBody::Binary(expr) => {
@@ -39,16 +33,8 @@ fn eval(expr: Expression) -> Option<Literal> {
                 return None;
             }
             match expr.op {
-                BinaryOperator::Equal => process_bool_literals(
-                    &left, &right,
-                    |left, right| Literal::Bool(left == right),
-                    loc, expr.op
-                ),
-                BinaryOperator::NotEqual => process_bool_literals(
-                    &left, &right,
-                    |left, right| Literal::Bool(left != right),
-                    loc, expr.op
-                ),
+                BinaryOperator::Equal => Some(Literal::Bool(is_equal(left, right))),
+                BinaryOperator::NotEqual => Some(Literal::Bool(!is_equal(left, right))),
                 BinaryOperator::Less => process_number_literals(
                     &left, &right,
                     |left, right| Literal::Bool(left < right),
@@ -103,15 +89,21 @@ fn eval(expr: Expression) -> Option<Literal> {
     }
 }
 
-fn process_bool_literals(left: &Literal, right: &Literal, res: impl Fn(bool, bool) -> Literal, loc: Location, op: BinaryOperator) -> Option<Literal> {
+fn is_equal(left: Literal, right: Literal) -> bool {
     match (left, right) {
-        (Literal::Bool(left), Literal::Bool(right)) => {
-            Some(res(*left, *right))
-        }
-        (_, _) => {
-            eprintln!("expected both operands to be bool for {op} at {loc}, got {left:?} and {right:?}");
-            None
-        }
+        (Literal::Nil, Literal::Nil) => true,
+        (Literal::Bool(left), Literal::Bool(right)) => left == right,
+        (Literal::Number(left), Literal::Number(right)) => left == right,
+        (Literal::String(left), Literal::String(right)) => left == right,
+        (_, _) => false,
+    }
+}
+
+fn cast_to_bool(value: Literal) -> bool {
+    match value {
+        Literal::Nil => false,
+        Literal::Bool(val) => val,
+        _ => true,
     }
 }
 
@@ -132,7 +124,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn test() {
+    fn test_literals() {
         let res = evaluate_expr_from_string("nil");
         assert_eq!(Some(Literal::Nil), res);
         assert_eq!("nil", res.unwrap().to_string());
@@ -156,5 +148,19 @@ mod test {
         let res = evaluate_expr_from_string("((false))");
         assert_eq!(Some(Literal::Bool(false)), res);
         assert_eq!("false", res.unwrap().to_string());
+    }
+    
+    #[test]
+    fn test_unary() {
+        assert_eq!("true", evaluate_expr_from_string("!false").unwrap().to_string());
+        assert_eq!("false", evaluate_expr_from_string("!true").unwrap().to_string());
+        assert_eq!("true", evaluate_expr_from_string("!!true").unwrap().to_string());
+        assert_eq!("false", evaluate_expr_from_string("!!nil").unwrap().to_string());
+        assert_eq!("true", evaluate_expr_from_string("!!1").unwrap().to_string());
+        assert_eq!("true", evaluate_expr_from_string("!!\"str\"").unwrap().to_string());
+        assert_eq!("true", evaluate_expr_from_string("!!\"\"").unwrap().to_string());
+        
+        assert_eq!("-73", evaluate_expr_from_string("-(73)").unwrap().to_string());
+        assert_eq!(None, evaluate_expr_from_string("-false"));
     }
 }
