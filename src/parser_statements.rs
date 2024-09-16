@@ -7,6 +7,7 @@ pub(crate) enum StatementBody {
     Nop,
     Print(Expression),
     Expression(Expression),
+    VariableDeclaration{name: String, value: Expression},
 }
 impl Display for StatementBody {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -14,6 +15,7 @@ impl Display for StatementBody {
             StatementBody::Nop => f.write_char(';'),
             StatementBody::Print(expr) => f.write_fmt(format_args!("print {expr};")),
             StatementBody::Expression(expr) => f.write_fmt(format_args!("{expr};")),
+            StatementBody::VariableDeclaration{name, value} => f.write_fmt(format_args!("var {name} = {value};")),
         }
     }
 }
@@ -68,12 +70,23 @@ fn parse_statement(tail: &[Token]) -> Option<(Statement, &[Token])> {
             let tail = check_statement_terminated(tail, loc)?;
             Some((Statement { body: StatementBody::Print(expr), loc }, tail))
         },
-        TokenKind::NUMBER | TokenKind::STRING  
+        TokenKind::NUMBER | TokenKind::STRING
             | TokenKind::NIL | TokenKind::TRUE | TokenKind::FALSE
             | TokenKind::LEFT_PAREN | TokenKind::MINUS | TokenKind::BANG => {
             let (expr, tail) = parse_expression(orig_tail, None)?;
             let tail = check_statement_terminated(tail, loc)?;
             Some((Statement { body: StatementBody::Expression(expr), loc }, tail))
+        },
+        TokenKind::VAR => {
+            let (name, tail) = expect_token_kind(tail, TokenKind::IDENTIFIER, loc)?;
+            let (_, tail) = expect_token_kind(tail, TokenKind::EQUAL, loc)?;
+            let (expr, tail) = parse_expression(tail, None)?;
+            let tail = check_statement_terminated(tail, loc)?;
+            let body = StatementBody::VariableDeclaration {
+                name: name.code.clone(), // todo: check if we can remove copying here
+                value: expr,
+            };
+            Some((Statement { body, loc }, tail))
         },
         _ => {
             eprintln!("Unexpected token {head} at {loc}, expected a start of a statement");
@@ -83,14 +96,19 @@ fn parse_statement(tail: &[Token]) -> Option<(Statement, &[Token])> {
 }
 
 fn check_statement_terminated(tail: &[Token], start_loc: Location) -> Option<&[Token]> {
+    let (_, tail) = expect_token_kind(tail, TokenKind::SEMICOLON, start_loc)?;
+    Some(tail)
+}
+
+fn expect_token_kind(tail: &[Token], expected: TokenKind, start_loc: Location) -> Option<(&Token, &[Token])> {
     let Some((head, tail)) = tail.split_first() else {
-        eprintln!("Unexpected end of token stream, expected semicolon after statement that starts at {start_loc}");
+        eprintln!("Unexpected end of token stream, expected {expected:?} after statement that starts at {start_loc}");
         return None;
     };
-    if matches!(head.kind, TokenKind::SEMICOLON) {
-        Some(tail)
+    if head.kind == expected {
+        Some((head, tail))
     } else {
-        eprintln!("Expected semicolon, found {head} at {}", head.loc);
+        eprintln!("Expected {expected:?}, found {head} at {}", head.loc);
         None
     }
 }
@@ -112,5 +130,17 @@ mod test {
         assert!(parse_statement_from_string("print 1+;").is_none());
         assert!(parse_statement_from_string("print (;").is_none());
         assert!(parse_statement_from_string("print ;").is_none());
+    }
+
+    #[test]
+    fn test_var() {
+        assert_eq!("var x = (+ var(y) 1.0);", parse_statement_from_string("var x = y+1;").unwrap().to_string());
+        assert!(parse_statement_from_string("var x = y+1").is_none());
+        assert!(parse_statement_from_string("var x = y+;").is_none());
+        assert!(parse_statement_from_string("var x = (;").is_none());
+        assert!(parse_statement_from_string("var x = ;").is_none());
+        assert!(parse_statement_from_string("var x y+1;").is_none());
+        assert!(parse_statement_from_string("x = y+1;").is_none());
+        assert!(parse_statement_from_string("var = y+1;").is_none());
     }
 }

@@ -6,7 +6,7 @@ mod parser_statements;
 use std::fs;
 use std::process::exit;
 use std::env;
-use crate::eval::{evaluate_expr_from_string, evaluate_statements_list_from_string};
+use crate::eval::{evaluate_expr_from_string, evaluate_statements_list_from_string, Memory};
 use crate::parser_expressions::parse_expression_from_string;
 use crate::tokenizer::tokenize_string;
 
@@ -67,7 +67,8 @@ fn evaluate_command(filename: &str) {
 fn run_command(filename: &str) {
     let file_contents = fs::read_to_string(filename)
         .expect(&format!("failed to read file {filename}"));
-    let result = evaluate_statements_list_from_string(&file_contents);
+    let mut memory = Memory::default();
+    let result = evaluate_statements_list_from_string(&file_contents, &mut memory);
     if let Some(exit_code) = result.get_exit_code() {
         exit(exit_code)
     }

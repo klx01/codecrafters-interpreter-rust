@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use crate::parser_expressions::{parse_expression_from_string, BinaryOperator, Expression, ExpressionBody, Literal, UnaryOperator};
 use crate::parser_statements::{parse_statement_list_from_string, Statement, StatementBody};
 use crate::tokenizer::Location;
 
+#[derive(PartialEq, Debug)]
 pub(crate) enum EvalResult {
     Ok,
     ParseError,
@@ -17,46 +19,61 @@ impl EvalResult {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct Memory {
+    variables: HashMap<String, Literal>,
+}
+
 pub(crate) fn evaluate_expr_from_string(str: &str) -> Option<Literal> {
     let expr = parse_expression_from_string(str)?;
-    let result = eval_expr(expr)?;
+    let memory = Memory::default();
+    let result = eval_expr(expr, &memory)?;
     Some(result)
 }
 
-pub(crate) fn evaluate_statements_list_from_string(str: &str) -> EvalResult {
+pub(crate) fn evaluate_statements_list_from_string(str: &str, memory: &mut Memory) -> EvalResult {
     let Some(statements) = parse_statement_list_from_string(str) else {
         return EvalResult::ParseError;
     };
-    if !eval_statements_list(statements) {
+    if !eval_statements_list(statements, memory) {
         return EvalResult::RuntimeError;
     }
     EvalResult::Ok
 }
 
-fn eval_statements_list(statements: Vec<Statement>) -> bool {
+fn eval_statements_list(statements: Vec<Statement>, memory: &mut Memory) -> bool {
     for statement in statements {
-        if eval_statement(statement).is_none() {
+        if eval_statement(statement, memory).is_none() {
             return false;
         }
     }
     true
 }
 
-fn eval_statement(statement: Statement) -> Option<()> {
+fn eval_statement(statement: Statement, memory: &mut Memory) -> Option<()> {
+    let loc = statement.loc;
     match statement.body {
         StatementBody::Nop => {},
-        StatementBody::Print(expr) => println!("{}", eval_expr(expr)?),
-        StatementBody::Expression(expr) => { eval_expr(expr)?; () },
+        StatementBody::Print(expr) => println!("{}", eval_expr(expr, memory)?),
+        StatementBody::Expression(expr) => { eval_expr(expr, memory)?; () },
+        StatementBody::VariableDeclaration { name, value } => {
+            if memory.variables.contains_key(&name) {
+                eprintln!("Can not re-declare variable {name} at {loc}");
+                return None;
+            }
+            let value = eval_expr(value, memory)?;
+            memory.variables.insert(name, value);
+        },
     }
     Some(())
 }
 
-fn eval_expr(expr: Expression) -> Option<Literal> {
+fn eval_expr(expr: Expression, memory: &Memory) -> Option<Literal> {
     let loc = expr.loc;
     match expr.body {
         ExpressionBody::Literal(x) => Some(x),
         ExpressionBody::Unary(expr) => {
-            let value = eval_expr(expr.ex)?;
+            let value = eval_expr(expr.ex, memory)?;
             match expr.op {
                 UnaryOperator::Minus => match value {
                     Literal::Number(n) => Some(Literal::Number(-n)),
@@ -69,8 +86,8 @@ fn eval_expr(expr: Expression) -> Option<Literal> {
             }
         }
         ExpressionBody::Binary(expr) => {
-            let left = eval_expr(expr.left)?;
-            let right = eval_expr(expr.right)?;
+            let left = eval_expr(expr.left, memory)?;
+            let right = eval_expr(expr.right, memory)?;
             match expr.op {
                 BinaryOperator::Equal => Some(Literal::Bool(is_equal(left, right))),
                 BinaryOperator::NotEqual => Some(Literal::Bool(!is_equal(left, right))),
@@ -124,7 +141,15 @@ fn eval_expr(expr: Expression) -> Option<Literal> {
                 ),
             }
         },
-        ExpressionBody::Grouping(expr) => eval_expr(*expr),
+        ExpressionBody::Grouping(expr) => eval_expr(*expr, memory),
+        ExpressionBody::Variable(name) => {
+            if let Some(val) = memory.variables.get(&name) {
+                Some(val.clone())
+            } else {
+                eprintln!("Undefined variable {name} at {loc}");
+                None
+            }
+        }
     }
 }
 
@@ -264,5 +289,14 @@ mod test {
         assert_eq!("false", evaluate_expr_from_string("\"\" == true").unwrap().to_string());
         assert_eq!("false", evaluate_expr_from_string("\"\" == false").unwrap().to_string());
         assert_eq!("false", evaluate_expr_from_string("\"\" == 0").unwrap().to_string());
+    }
+
+    #[test]
+    fn test_variables() {
+        let mut memory = Memory::default();
+        let statements = "var a = 1; var b = a + a +3;";
+        let res = evaluate_statements_list_from_string(statements, &mut memory);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("5", memory.variables.get("b").unwrap().to_string());
     }
 }

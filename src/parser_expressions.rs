@@ -7,6 +7,7 @@ pub(crate) enum ExpressionBody {
     Unary(Box<UnaryExpression>),
     Binary(Box<BinaryExpression>),
     Grouping(Box<Expression>),
+    Variable(String),
 }
 #[derive(Debug)]
 pub(crate) struct Expression {
@@ -22,6 +23,7 @@ impl Display for ExpressionBody {
             ExpressionBody::Grouping(inner) => f.write_fmt(format_args!("(group {inner})")),
             ExpressionBody::Unary(ex) => f.write_fmt(format_args!("({} {})", ex.op, ex.ex)),
             ExpressionBody::Binary(ex) => f.write_fmt(format_args!("({} {} {})", ex.op, ex.left, ex.right)),
+            ExpressionBody::Variable(name) => f.write_fmt(format_args!("var({name})")),
         }
     }
 }
@@ -31,7 +33,7 @@ impl Display for Expression {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) enum Literal {
     Number(f64),
     String(String),
@@ -169,6 +171,14 @@ fn parse_operand<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Ex
         }
         return None;
     };
+    
+    match token.kind {
+        TokenKind::IDENTIFIER => {
+            let body = ExpressionBody::Variable(token.code.clone()); // todo: check if we can remove copying here
+            return Some((Expression{ body, loc: token.loc }, tail));
+        }
+        _ => {},
+    };
 
     let literal = match token.kind {
         TokenKind::NIL => Some(Literal::Nil),
@@ -180,7 +190,7 @@ fn parse_operand<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Ex
                 .parse()
                 .expect("got an invalid numeric literal")
         )),
-        TokenKind::STRING => Some(Literal::String(token.literal.clone().expect("got a literal token without literal value"))), // todo: check if we can remove copying her)e
+        TokenKind::STRING => Some(Literal::String(token.literal.clone().expect("got a literal token without literal value"))), // todo: check if we can remove copying here
         _ => None,
     };
     if let Some(literal) = literal {
@@ -234,6 +244,7 @@ mod test {
             assert_eq!(str, parse_expression_from_string(str).unwrap().to_string(), "value {str}");
         }
         assert_eq!("asdf", parse_expression_from_string("\"asdf\"").unwrap().to_string());
+        assert_eq!("var(asdf)", parse_expression_from_string("asdf").unwrap().to_string());
     }
 
     #[test]
