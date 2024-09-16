@@ -58,7 +58,7 @@ fn evaluate_command(filename: &str) {
     if let Some(expr) = evaluate_expr_from_string(&file_contents) {
         println!("{expr}");
     } else {
-        exit(65)
+        exit(70)
     }
 }
 
