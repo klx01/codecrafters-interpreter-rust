@@ -1,6 +1,7 @@
 use std::collections::HashMap;
+use std::io::Write;
 use crate::parser_expressions::{parse_expression_from_string, BinaryOperator, Expression, ExpressionBody, Literal, UnaryOperator};
-use crate::parser_statements::{parse_statement_list_from_string, Statement, StatementBody};
+use crate::parser_statements::{parse_statement_list_from_string, Scope, Statement, StatementBody};
 use crate::tokenizer::Location;
 
 #[derive(PartialEq, Debug)]
@@ -19,46 +20,85 @@ impl EvalResult {
     }
 }
 
+type MemoryScope = HashMap<String, Literal>;
 #[derive(Default)]
-pub(crate) struct Memory {
-    variables: HashMap<String, Literal>,
+struct Memory {
+    scopes: Vec<MemoryScope>,
+}
+impl Memory {
+    fn new() -> Self {
+        Self::default()
+    }
+    fn enter_scope(&mut self) {
+        self.scopes.push(Default::default());
+    }
+    fn leave_scope(&mut self) {
+        self.scopes.pop();
+    }
+    fn declare(&mut self, name: String, value: Literal) {
+        self.scopes.last_mut().expect("No scopes left in memory!").insert(name, value);
+    }
+    fn assign(&mut self, name: &str, value: Literal) -> bool {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(val) = scope.get_mut(name) {
+                *val = value;
+                return true;
+            }
+        }
+        false
+    }
+    fn get(&self, name: &str) -> Option<&Literal> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(value) = scope.get(name) {
+                return Some(value);
+            }
+        }
+        None
+    }
 }
 
 pub(crate) fn evaluate_expr_from_string(str: &str) -> Option<Literal> {
     let expr = parse_expression_from_string(str)?;
-    let mut memory = Memory::default();
+    let mut memory = Memory::new();
     let result = eval_expr(expr, &mut memory)?;
     Some(result)
 }
 
-pub(crate) fn evaluate_statements_list_from_string(str: &str, memory: &mut Memory) -> EvalResult {
-    let Some(statements) = parse_statement_list_from_string(str) else {
+pub(crate) fn evaluate_statements_list_from_string(str: &str, output: &mut impl Write) -> EvalResult {
+    let Some(scope) = parse_statement_list_from_string(str) else {
         return EvalResult::ParseError;
     };
-    if !eval_statements_list(statements, memory) {
+    let mut memory = Memory::new();
+    if eval_scope(scope, &mut memory, output).is_none() {
         return EvalResult::RuntimeError;
     }
     EvalResult::Ok
 }
 
-fn eval_statements_list(statements: Vec<Statement>, memory: &mut Memory) -> bool {
-    for statement in statements {
-        if eval_statement(statement, memory).is_none() {
-            return false;
+fn eval_scope(scope: Scope, memory: &mut Memory, output: &mut impl Write) -> Option<()> {
+    memory.enter_scope();
+    for statement in scope.statements {
+        if eval_statement(statement, memory, output).is_none() {
+            memory.leave_scope();
+            return None;
         }
     }
-    true
+    memory.leave_scope();
+    Some(())
 }
 
-fn eval_statement(statement: Statement, memory: &mut Memory) -> Option<()> {
+fn eval_statement(statement: Statement, memory: &mut Memory, output: &mut impl Write) -> Option<()> {
     match statement.body {
-        StatementBody::Nop => {},
-        StatementBody::Print(expr) => println!("{}", eval_expr(expr, memory)?),
+        StatementBody::Print(expr) => {
+            let res = eval_expr(expr, memory)?;
+            output.write_fmt(format_args!("{res}\n")).unwrap();
+        },
         StatementBody::Expression(expr) => { eval_expr(expr, memory)?; () },
         StatementBody::VariableDeclaration { name, value } => {
             let value = eval_expr(value, memory)?;
-            memory.variables.insert(name, value);
+            memory.declare(name, value);
         },
+        StatementBody::Scope(scope) => eval_scope(*scope, memory, output)?,
     }
     Some(())
 }
@@ -138,17 +178,21 @@ fn eval_expr(expr: Expression, memory: &mut Memory) -> Option<Literal> {
         },
         ExpressionBody::Grouping(expr) => eval_expr(*expr, memory),
         ExpressionBody::Variable(name) => {
-            if let Some(val) = memory.variables.get(&name) {
+            if let Some(val) = memory.get(&name) {
                 Some(val.clone())
             } else {
-                eprintln!("Undefined variable {name} at {loc}");
+                eprintln!("Can not read an undefined variable {name} at {loc}");
                 None
             }
         }
         ExpressionBody::Assignment(expr) => {
             let name = expr.var;
             let value = eval_expr(expr.expr, memory)?;
-            memory.variables.insert(name, value.clone());
+            let is_found = memory.assign(&name, value.clone());
+            if !is_found {
+                eprintln!("Can not assign to an undefined variable {name} at {loc}");
+                return None;
+            }
             Some(value)
         },
     }
@@ -294,16 +338,53 @@ mod test {
 
     #[test]
     fn test_variables() {
-        let mut memory = Memory::default();
-        let statements = "var a = 1; var a = a + a +3;";
-        let res = evaluate_statements_list_from_string(statements, &mut memory);
+        let mut output = Vec::<u8>::new();
+
+        let statements = "var a = 1; var a = a + a +3; print a;";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
         assert_eq!(EvalResult::Ok, res);
-        assert_eq!("5", memory.variables.get("a").unwrap().to_string());
-        
-        let statements = "var b = a = a * 3;";
-        let res = evaluate_statements_list_from_string(statements, &mut memory);
+        assert_eq!("5\n", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+
+        let statements = "var a = 5; var b = a = a * 3; print a; print b;";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
         assert_eq!(EvalResult::Ok, res);
-        assert_eq!("15", memory.variables.get("b").unwrap().to_string());
-        assert_eq!("15", memory.variables.get("a").unwrap().to_string());
+        assert_eq!("15\n15\n", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+
+        let statements = "var a = 15; var b = 15; b = a = a * 3; print a; print b;";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("45\n45\n", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+
+        let statements = "var a = 45; b = a = a * 3; print a; print b;";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::RuntimeError, res);
+        assert_eq!("", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+    }
+
+    #[test]
+    fn test_scopes() {
+        let mut output = Vec::<u8>::new();
+
+        let statements = "var a = 1; {var a = a + 2; print a;} print a;";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("3\n1\n", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+
+        let statements = "var a = 1; var b = 2; {var a = 3; a = 4; b = 5;} print a; print b;";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("1\n5\n", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+
+        let statements = "{var a = 1;}}";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::ParseError, res);
+        assert_eq!("", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
     }
 }
