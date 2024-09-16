@@ -68,7 +68,7 @@ fn run_command(filename: &str) {
     let file_contents = fs::read_to_string(filename)
         .expect(&format!("failed to read file {filename}"));
     if evaluate_statements_list_from_string(&file_contents).is_none() {
-        exit(70)
+        exit(65)
     }
 }
 
