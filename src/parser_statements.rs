@@ -1,5 +1,5 @@
 use std::fmt::{Display, Formatter, Write};
-use crate::parser_expressions::{parse_expression, Expression};
+use crate::parser_expressions::{parse_expression, Expression, ExpressionBody, Literal};
 use crate::tokenizer::{tokenize_string_no_eof, Location, Token, TokenKind};
 
 #[derive(Debug)]
@@ -79,9 +79,29 @@ fn parse_statement(tail: &[Token]) -> Option<(Statement, &[Token])> {
         },
         TokenKind::VAR => {
             let (name, tail) = expect_token_kind(tail, TokenKind::IDENTIFIER, loc)?;
-            let (_, tail) = expect_token_kind(tail, TokenKind::EQUAL, loc)?;
-            let (expr, tail) = parse_expression(tail, None)?;
-            let tail = check_statement_terminated(tail, loc)?;
+            let Some((next, tail)) = tail.split_first() else {
+                eprintln!("Unexpected end of token stream, expected = or ; in variable declaration after {}", name.loc);
+                return None;
+            };
+            let (expr, tail) = match next.kind {
+                TokenKind::EQUAL => {
+                    let (expr, tail) = parse_expression(tail, None)?;
+                    let tail = check_statement_terminated(tail, loc)?;
+                    (expr, tail)
+                }
+                TokenKind::SEMICOLON => {
+                    let expr = Expression{ 
+                        body: ExpressionBody::Literal(Literal::Nil), 
+                        loc: next.loc, 
+                    };
+                    (expr, tail)
+                }
+                _ => {
+                    eprintln!("Expected = or ;, found {next} at {}", next.loc);
+                    return None;
+                },
+            };
+            
             let body = StatementBody::VariableDeclaration {
                 name: name.code.clone(), // todo: check if we can remove copying here
                 value: expr,
@@ -102,7 +122,7 @@ fn check_statement_terminated(tail: &[Token], start_loc: Location) -> Option<&[T
 
 fn expect_token_kind(tail: &[Token], expected: TokenKind, start_loc: Location) -> Option<(&Token, &[Token])> {
     let Some((head, tail)) = tail.split_first() else {
-        eprintln!("Unexpected end of token stream, expected {expected:?} after statement that starts at {start_loc}");
+        eprintln!("Unexpected end of token stream, expected {expected:?} in a statement that starts at {start_loc}");
         return None;
     };
     if head.kind == expected {
@@ -142,5 +162,6 @@ mod test {
         assert!(parse_statement_from_string("var x y+1;").is_none());
         assert!(parse_statement_from_string("x = y+1;").is_none());
         assert!(parse_statement_from_string("var = y+1;").is_none());
+        assert_eq!("var x = nil;", parse_statement_from_string("var x;").unwrap().to_string());
     }
 }
