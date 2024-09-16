@@ -2,22 +2,44 @@ use crate::parser_expressions::{parse_expression_from_string, BinaryOperator, Ex
 use crate::parser_statements::{parse_statement_list_from_string, Statement, StatementBody};
 use crate::tokenizer::Location;
 
+pub(crate) enum EvalResult {
+    Ok,
+    ParseError,
+    RuntimeError,
+}
+impl EvalResult {
+    pub(crate) fn get_exit_code(&self) -> Option<i32> {
+        match self {
+            EvalResult::Ok => None,
+            EvalResult::ParseError => Some(65),
+            EvalResult::RuntimeError => Some(70),
+        }
+    }
+}
+
 pub(crate) fn evaluate_expr_from_string(str: &str) -> Option<Literal> {
     let expr = parse_expression_from_string(str)?;
     let result = eval_expr(expr)?;
     Some(result)
 }
 
-pub(crate) fn evaluate_statements_list_from_string(str: &str) -> Option<()> {
-    let statements = parse_statement_list_from_string(str)?;
-    eval_statements_list(statements)
+pub(crate) fn evaluate_statements_list_from_string(str: &str) -> EvalResult {
+    let Some(statements) = parse_statement_list_from_string(str) else {
+        return EvalResult::ParseError;
+    };
+    if !eval_statements_list(statements) {
+        return EvalResult::RuntimeError;
+    }
+    EvalResult::Ok
 }
 
-fn eval_statements_list(statements: Vec<Statement>) -> Option<()> {
+fn eval_statements_list(statements: Vec<Statement>) -> bool {
     for statement in statements {
-        eval_statement(statement)?;
+        if eval_statement(statement).is_none() {
+            return false;
+        }
     }
-    Some(())
+    true
 }
 
 fn eval_statement(statement: Statement) -> Option<()> {
