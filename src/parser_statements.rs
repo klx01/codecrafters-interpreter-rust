@@ -7,7 +7,8 @@ pub(crate) enum StatementBody {
     Print(Expression),
     Expression(Expression),
     VariableDeclaration{name: String, value: Expression},
-    Scope(Box<Scope>)
+    Scope(Box<Scope>),
+    If{condition: Expression, body: Option<Box<Statement>>, else_body: Option<Box<Statement>>}
 }
 impl Display for StatementBody {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -16,6 +17,19 @@ impl Display for StatementBody {
             StatementBody::Expression(expr) => f.write_fmt(format_args!("{expr};")),
             StatementBody::VariableDeclaration{name, value} => f.write_fmt(format_args!("var {name} = {value};")),
             StatementBody::Scope(scope) => f.write_fmt(format_args!("{scope}")),
+            StatementBody::If{ condition, body, else_body } => {
+                f.write_fmt(format_args!("if {condition}"))?;
+                if let Some(body) = body {
+                    f.write_fmt(format_args!(" {body}"))?;
+                } else {
+                    f.write_fmt(format_args!(";"))?;
+                }
+                if let Some(else_body) = else_body {
+                    f.write_fmt(format_args!(" else {else_body}"))
+                } else {
+                    Ok(())
+                }
+            },
         }
     }
 }
@@ -180,10 +194,42 @@ fn parse_statement(tail: &[Token]) -> Option<(ParseResult, &[Token])> {
         TokenKind::RIGHT_BRACE => {
             Some((ParseResult::ExitScope, tail))
         },
+        TokenKind::IF => {
+            let _ = expect_token_kind(tail, TokenKind::LEFT_PAREN, loc)?;
+            let (condition, tail) = parse_expression(tail, None)?;
+            let (body, tail) = parse_actual_statement(tail)?;
+            let (els, tail) = check_token_kind(tail, TokenKind::ELSE);
+            let (else_body, tail) = if els.is_some() {
+                parse_actual_statement(tail)?
+            } else {
+                (None, tail)
+            };
+            let if_stmt = StatementBody::If {
+                condition,
+                body: body.map(|x| Box::new(x)),
+                else_body: else_body.map(|x| Box::new(x)),
+            };
+            let stmt = Statement{body: if_stmt, loc};
+            Some((ParseResult::Statement(stmt), tail))
+        },
         _ => {
             eprintln!("Unexpected token {head} at {loc}, expected a start of a statement");
             None
         },
+    }
+}
+
+fn parse_actual_statement(tail: &[Token]) -> Option<(Option<Statement>, &[Token])> {
+    let tail_orig = tail;
+    let (parse_result, tail) = parse_statement(tail)?;
+    match parse_result {
+        ParseResult::Statement(stmt) => Some((Some(stmt), tail)),
+        ParseResult::Nop => Some((None, tail)),
+        ParseResult::ExitScope => {
+            let loc = tail_orig.first().unwrap().loc;
+            eprintln!("Got closing brace when expecting statement at {loc}");
+            None
+        }
     }
 }
 
@@ -202,6 +248,17 @@ fn expect_token_kind(tail: &[Token], expected: TokenKind, start_loc: Location) -
     } else {
         eprintln!("Expected {expected:?}, found {head} at {}", head.loc);
         None
+    }
+}
+
+fn check_token_kind(tail_orig: &[Token], expected: TokenKind) -> (Option<&Token>, &[Token]) {
+    let Some((head, tail)) = tail_orig.split_first() else {
+        return (None, tail_orig);
+    };
+    if head.kind == expected {
+        (Some(head), tail)
+    } else {
+        (None, tail_orig)
     }
 }
 
@@ -247,6 +304,43 @@ mod test {
         
         let statements = "var a = 1; {var a = a + 2; print a;} print a;";
         let expected = "{ var a = 1.0; { var a = (+ var(a) 2.0); print var(a); } print var(a); }";
+        assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
+    }
+
+    #[test]
+    fn test_if() {
+        let statements = "if (true) print 1;";
+        let expected = "{ if (group true) print 1.0; }";
+        assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
+
+        let statements = "if (true) {print 1; print 2;}";
+        let expected = "{ if (group true) { print 1.0; print 2.0; } }";
+        assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
+
+        let statements = "if (true) print 1; print 2;";
+        let expected = "{ if (group true) print 1.0; print 2.0; }";
+        assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
+
+        let statements = "if (true);";
+        let expected = "{ if (group true); }";
+        assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
+
+        assert!(parse_statement_list_from_string("if true print 1;").is_none());
+
+        let statements = "if (true) print 1; else print 2;";
+        let expected = "{ if (group true) print 1.0; else print 2.0; }";
+        assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
+
+        let statements = "if (true) print 1; else {print 2; print 3;}";
+        let expected = "{ if (group true) print 1.0; else { print 2.0; print 3.0; } }";
+        assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
+
+        let statements = "if (true) print 1; else print 2; print 3;";
+        let expected = "{ if (group true) print 1.0; else print 2.0; print 3.0; }";
+        assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
+
+        let statements = "if (true) print 1; else;";
+        let expected = "{ if (group true) print 1.0; }";
         assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
     }
 }

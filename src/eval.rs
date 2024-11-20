@@ -99,6 +99,18 @@ fn eval_statement(statement: Statement, memory: &mut Memory, output: &mut impl W
             memory.declare(name, value);
         },
         StatementBody::Scope(scope) => eval_scope(*scope, memory, output)?,
+        StatementBody::If { condition, body, else_body } => {
+            let condition_result = eval_expr(condition, memory)?;
+            let condition_result = cast_to_bool(condition_result);
+            let eval_body = if condition_result {
+                body
+            } else {
+                else_body
+            };
+            if let Some(eval_body) = eval_body {
+                eval_statement(*eval_body, memory, output);
+            }
+        }
     }
     Some(())
 }
@@ -382,6 +394,65 @@ mod test {
         output.truncate(0);
 
         let statements = "{var a = 1;}}";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::ParseError, res);
+        assert_eq!("", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+    }
+
+    #[test]
+    fn test_if() {
+        let mut output = Vec::<u8>::new();
+
+        let statements = "if (true) print 1; else print 2; print 3;";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("1\n3\n", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+
+        let statements = "if (true) print 1; else {print 2; print 3;}";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("1\n", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+
+        let statements = "if (false) print 1; else print 2;";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("2\n", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+
+        let statements = "if (false) print 1; else {print 2; print 3;}";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("2\n3\n", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+
+        let statements = "if (false) print 1; print 2;";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("2\n", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+
+        let statements = "if (false) {print 1; print 2;}";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+
+        let statements = "var a = false; if (a = true) {print 1;}";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("1\n", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+        
+        let statements = "if (true);";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+        
+        let statements = "if true print 1;";
         let res = evaluate_statements_list_from_string(statements, &mut output);
         assert_eq!(EvalResult::ParseError, res);
         assert_eq!("", std::str::from_utf8(&output).unwrap());
