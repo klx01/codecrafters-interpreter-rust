@@ -8,7 +8,8 @@ pub(crate) enum StatementBody {
     Expression(Expression),
     VariableDeclaration{name: String, value: Expression},
     Scope(Box<Scope>),
-    If{condition: Expression, body: Option<Box<Statement>>, else_body: Option<Box<Statement>>}
+    If{condition: Expression, body: Option<Box<Statement>>, else_body: Option<Box<Statement>>},
+    While{condition: Expression, body: Option<Box<Statement>>},
 }
 impl Display for StatementBody {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -30,6 +31,14 @@ impl Display for StatementBody {
                     Ok(())
                 }
             },
+            StatementBody::While { condition, body } => {
+                f.write_fmt(format_args!("while {condition}"))?;
+                if let Some(body) = body {
+                    f.write_fmt(format_args!(" {body}"))
+                } else {
+                    f.write_fmt(format_args!(";"))
+                }
+            }
         }
     }
 }
@@ -212,6 +221,17 @@ fn parse_statement(tail: &[Token]) -> Option<(ParseResult, &[Token])> {
             let stmt = Statement{body: if_stmt, loc};
             Some((ParseResult::Statement(stmt), tail))
         },
+        TokenKind::WHILE => {
+            let _ = expect_token_kind(tail, TokenKind::LEFT_PAREN, loc)?;
+            let (condition, tail) = parse_expression(tail, None)?;
+            let (body, tail) = parse_actual_statement(tail)?;
+            let while_body = StatementBody::While {
+                condition,
+                body: body.map(|x| Box::new(x)),
+            };
+            let stmt = Statement{body: while_body, loc};
+            Some((ParseResult::Statement(stmt), tail))
+        },
         _ => {
             eprintln!("Unexpected token {head} at {loc}, expected a start of a statement");
             None
@@ -342,5 +362,26 @@ mod test {
         let statements = "if (true) print 1; else;";
         let expected = "{ if (group true) print 1.0; }";
         assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
+    }
+
+    #[test]
+    fn test_while() {
+        let statements = "while (true) print 1;";
+        let expected = "{ while (group true) print 1.0; }";
+        assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
+
+        let statements = "while (true) {print 1; print 2;}";
+        let expected = "{ while (group true) { print 1.0; print 2.0; } }";
+        assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
+
+        let statements = "while (true) print 1; print 2;";
+        let expected = "{ while (group true) print 1.0; print 2.0; }";
+        assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
+
+        let statements = "while (true);";
+        let expected = "{ while (group true); }";
+        assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
+
+        assert!(parse_statement_list_from_string("while true print 1;").is_none());
     }
 }

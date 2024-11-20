@@ -35,8 +35,13 @@ impl Memory {
     fn leave_scope(&mut self) {
         self.scopes.pop();
     }
-    fn declare(&mut self, name: String, value: Literal) {
-        self.scopes.last_mut().expect("No scopes left in memory!").insert(name, value);
+    fn declare(&mut self, name: &str, value: Literal) {
+        let scope = self.scopes.last_mut().expect("No scopes left in memory!");
+        if let Some(val_ref) = scope.get_mut(name) {
+            *val_ref = value;
+        } else {
+            scope.insert(name.to_string(), value);
+        }
     }
     fn assign(&mut self, name: &str, value: Literal) -> bool {
         for scope in self.scopes.iter_mut().rev() {
@@ -60,7 +65,7 @@ impl Memory {
 pub(crate) fn evaluate_expr_from_string(str: &str) -> Option<Literal> {
     let expr = parse_expression_from_string(str)?;
     let mut memory = Memory::new();
-    let result = eval_expr(expr, &mut memory)?;
+    let result = eval_expr(&expr, &mut memory)?;
     Some(result)
 }
 
@@ -69,15 +74,15 @@ pub(crate) fn evaluate_statements_list_from_string(str: &str, output: &mut impl 
         return EvalResult::ParseError;
     };
     let mut memory = Memory::new();
-    if eval_scope(scope, &mut memory, output).is_none() {
+    if eval_scope(&scope, &mut memory, output).is_none() {
         return EvalResult::RuntimeError;
     }
     EvalResult::Ok
 }
 
-fn eval_scope(scope: Scope, memory: &mut Memory, output: &mut impl Write) -> Option<()> {
+fn eval_scope(scope: &Scope, memory: &mut Memory, output: &mut impl Write) -> Option<()> {
     memory.enter_scope();
-    for statement in scope.statements {
+    for statement in &scope.statements {
         if eval_statement(statement, memory, output).is_none() {
             memory.leave_scope();
             return None;
@@ -87,8 +92,8 @@ fn eval_scope(scope: Scope, memory: &mut Memory, output: &mut impl Write) -> Opt
     Some(())
 }
 
-fn eval_statement(statement: Statement, memory: &mut Memory, output: &mut impl Write) -> Option<()> {
-    match statement.body {
+fn eval_statement(statement: &Statement, memory: &mut Memory, output: &mut impl Write) -> Option<()> {
+    match &statement.body {
         StatementBody::Print(expr) => {
             let res = eval_expr(expr, memory)?;
             output.write_fmt(format_args!("{res}\n")).unwrap();
@@ -98,9 +103,9 @@ fn eval_statement(statement: Statement, memory: &mut Memory, output: &mut impl W
             let value = eval_expr(value, memory)?;
             memory.declare(name, value);
         },
-        StatementBody::Scope(scope) => eval_scope(*scope, memory, output)?,
+        StatementBody::Scope(scope) => eval_scope(scope, memory, output)?,
         StatementBody::If { condition, body, else_body } => {
-            let condition_result = eval_expr(condition, memory)?;
+            let condition_result = eval_expr(&condition, memory)?;
             let condition_result = cast_to_bool(&condition_result);
             let eval_body = if condition_result {
                 body
@@ -108,19 +113,33 @@ fn eval_statement(statement: Statement, memory: &mut Memory, output: &mut impl W
                 else_body
             };
             if let Some(eval_body) = eval_body {
-                eval_statement(*eval_body, memory, output);
+                eval_statement(eval_body, memory, output);
+            }
+        }
+        StatementBody::While { condition, body } => {
+            let mut iter_count = 0;
+            while cast_to_bool(&eval_expr(condition, memory)?) {
+                if cfg!(test) {
+                    iter_count += 1;
+                    if iter_count > 100000 {
+                        panic!("while loop reached iteration {iter_count}");
+                    }
+                }
+                if let Some(body) = body {
+                    eval_statement(body, memory, output);
+                }
             }
         }
     }
     Some(())
 }
 
-fn eval_expr(expr: Expression, memory: &mut Memory) -> Option<Literal> {
+fn eval_expr(expr: &Expression, memory: &mut Memory) -> Option<Literal> {
     let loc = expr.loc;
-    match expr.body {
-        ExpressionBody::Literal(x) => Some(x),
+    match &expr.body {
+        ExpressionBody::Literal(x) => Some(x.clone()), // todo: is it possible to not clone this when we don't actually need to?
         ExpressionBody::Unary(expr) => {
-            let value = eval_expr(expr.ex, memory)?;
+            let value = eval_expr(&expr.ex, memory)?;
             match expr.op {
                 UnaryOperator::Minus => match value {
                     Literal::Number(n) => Some(Literal::Number(-n)),
@@ -133,25 +152,25 @@ fn eval_expr(expr: Expression, memory: &mut Memory) -> Option<Literal> {
             }
         }
         ExpressionBody::Binary(expr) => {
-            let left = eval_expr(expr.left, memory)?;
+            let left = eval_expr(&expr.left, memory)?;
             match expr.op {
                 BinaryOperator::Or => {
                     if cast_to_bool(&left) {
                         return Some(left);
                     }
-                    let right = eval_expr(expr.right, memory)?;
+                    let right = eval_expr(&expr.right, memory)?;
                     return Some(right);
                 },
                 BinaryOperator::And => {
                     if !cast_to_bool(&left) {
                         return Some(left);
                     }
-                    let right = eval_expr(expr.right, memory)?;
+                    let right = eval_expr(&expr.right, memory)?;
                     return Some(right);
                 },
                 _ => {},
             };
-            let right = eval_expr(expr.right, memory)?;
+            let right = eval_expr(&expr.right, memory)?;
             match expr.op {
                 BinaryOperator::Equal => Some(Literal::Bool(is_equal(left, right))),
                 BinaryOperator::NotEqual => Some(Literal::Bool(!is_equal(left, right))),
@@ -207,7 +226,7 @@ fn eval_expr(expr: Expression, memory: &mut Memory) -> Option<Literal> {
                 BinaryOperator::And => unreachable!(),
             }
         },
-        ExpressionBody::Grouping(expr) => eval_expr(*expr, memory),
+        ExpressionBody::Grouping(expr) => eval_expr(expr, memory),
         ExpressionBody::Variable(name) => {
             if let Some(val) = memory.get(&name) {
                 Some(val.clone())
@@ -217,9 +236,9 @@ fn eval_expr(expr: Expression, memory: &mut Memory) -> Option<Literal> {
             }
         }
         ExpressionBody::Assignment(expr) => {
-            let name = expr.var;
-            let value = eval_expr(expr.expr, memory)?;
-            let is_found = memory.assign(&name, value.clone());
+            let name = &expr.var;
+            let value = eval_expr(&expr.expr, memory)?;
+            let is_found = memory.assign(name, value.clone());
             if !is_found {
                 eprintln!("Can not assign to an undefined variable {name} at {loc}");
                 return None;
@@ -518,6 +537,47 @@ mod test {
         let res = evaluate_statements_list_from_string(statements, &mut output);
         assert_eq!(EvalResult::Ok, res);
         assert_eq!("3\n", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+    }
+
+    #[test]
+    fn test_while() {
+        let mut output = Vec::<u8>::new();
+
+        let statements = "var a = 3; while (a > 0) print a = a - 1; print 100;";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("2\n1\n0\n100\n", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+
+        let statements = "var a = 3; while (a > 0) {print a = a - 1; print 100;}";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("2\n100\n1\n100\n0\n100\n", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+
+        let statements = "var a = 3; while (a < 0) print a = a - 1; print 100;";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("100\n", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+
+        let statements = "var a = 3; while (a < 0) {print a = a - 1; print 100;}";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+
+        let statements = "var a = 3; while ((a = a - 1) > 0); print a;";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("0\n", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+
+        let statements = "var a = 3; while a > 0 print a = a - 1; print 100;";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::ParseError, res);
+        assert_eq!("", std::str::from_utf8(&output).unwrap());
         output.truncate(0);
     }
 }
