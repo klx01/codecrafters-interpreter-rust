@@ -85,6 +85,8 @@ pub(crate) enum BinaryOperator {
     Minus,
     Multiply,
     Divide,
+    And,
+    Or,
 }
 impl Display for BinaryOperator {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -99,6 +101,8 @@ impl Display for BinaryOperator {
             BinaryOperator::Minus => f.write_str("-"),
             BinaryOperator::Multiply => f.write_str("*"),
             BinaryOperator::Divide => f.write_str("/"),
+            BinaryOperator::And => f.write_str("and"),
+            BinaryOperator::Or => f.write_str("or"),
         }
     }
 }
@@ -150,7 +154,7 @@ fn parse_assignment<'a>(mut tail: &'a [Token], parent: Option<&'a Token>) -> Opt
             _ => {},
         }
     };
-    parse_binary_expression(tail, parent, 4)
+    parse_binary_expression(tail, parent, 6)
 }
 
 fn parse_binary_expression<'a>(tail: &'a [Token], parent: Option<&'a Token>, parent_priority: u8) -> Option<(Expression, &'a [Token])> {
@@ -164,6 +168,8 @@ fn parse_binary_expression<'a>(tail: &'a [Token], parent: Option<&'a Token>, par
             break;
         };
         let (op, priority) = match next.kind {
+            TokenKind::OR => (BinaryOperator::Or, 5),
+            TokenKind::AND => (BinaryOperator::And, 4),
             TokenKind::EQUAL_EQUAL => (BinaryOperator::Equal, 3),
             TokenKind::BANG_EQUAL => (BinaryOperator::NotEqual, 3),
             TokenKind::LESS => (BinaryOperator::Less, 2),
@@ -295,6 +301,8 @@ mod test {
         assert_eq!("(- (+ 52.0 80.0) 94.0)", parse_expression_from_string("52 + 80 - 94").unwrap().to_string());
         assert_eq!("(< (< 83.0 99.0) 115.0)", parse_expression_from_string("83 < 99 < 115").unwrap().to_string());
         assert_eq!("(== baz baz)", parse_expression_from_string("\"baz\" == \"baz\"").unwrap().to_string());
+        assert_eq!("(or true false)", parse_expression_from_string("true or false").unwrap().to_string());
+        assert_eq!("(and true false)", parse_expression_from_string("true and false").unwrap().to_string());
     }
 
     #[test]
@@ -306,5 +314,7 @@ mod test {
         assert_eq!("(= var(a) (= var(b) (= var(c) (+ 1.0 2.0))))", parse_expression_from_string("a = b = c = 1 + 2").unwrap().to_string());
         assert_eq!("1.0", parse_expression_from_string("1 = a").unwrap().to_string());
         assert_eq!("(+ 1.0 var(a))", parse_expression_from_string("1 + a = 1").unwrap().to_string());
+        
+        assert_eq!("(or (== var(a) var(b)) (and (== var(a) var(c)) (== var(z) var(x))))", parse_expression_from_string("a == b or a == c and z == x").unwrap().to_string());
     }
 }

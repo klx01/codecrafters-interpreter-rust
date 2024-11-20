@@ -101,7 +101,7 @@ fn eval_statement(statement: Statement, memory: &mut Memory, output: &mut impl W
         StatementBody::Scope(scope) => eval_scope(*scope, memory, output)?,
         StatementBody::If { condition, body, else_body } => {
             let condition_result = eval_expr(condition, memory)?;
-            let condition_result = cast_to_bool(condition_result);
+            let condition_result = cast_to_bool(&condition_result);
             let eval_body = if condition_result {
                 body
             } else {
@@ -129,11 +129,28 @@ fn eval_expr(expr: Expression, memory: &mut Memory) -> Option<Literal> {
                         None
                     }
                 }
-                UnaryOperator::Not => Some(Literal::Bool(!cast_to_bool(value))),
+                UnaryOperator::Not => Some(Literal::Bool(!cast_to_bool(&value))),
             }
         }
         ExpressionBody::Binary(expr) => {
             let left = eval_expr(expr.left, memory)?;
+            match expr.op {
+                BinaryOperator::Or => {
+                    if cast_to_bool(&left) {
+                        return Some(left);
+                    }
+                    let right = eval_expr(expr.right, memory)?;
+                    return Some(right);
+                },
+                BinaryOperator::And => {
+                    if !cast_to_bool(&left) {
+                        return Some(left);
+                    }
+                    let right = eval_expr(expr.right, memory)?;
+                    return Some(right);
+                },
+                _ => {},
+            };
             let right = eval_expr(expr.right, memory)?;
             match expr.op {
                 BinaryOperator::Equal => Some(Literal::Bool(is_equal(left, right))),
@@ -186,6 +203,8 @@ fn eval_expr(expr: Expression, memory: &mut Memory) -> Option<Literal> {
                     |left, right| Literal::Number(left / right),
                     loc, expr.op
                 ),
+                BinaryOperator::Or => unreachable!(),
+                BinaryOperator::And => unreachable!(),
             }
         },
         ExpressionBody::Grouping(expr) => eval_expr(*expr, memory),
@@ -220,10 +239,10 @@ fn is_equal(left: Literal, right: Literal) -> bool {
     }
 }
 
-fn cast_to_bool(value: Literal) -> bool {
+fn cast_to_bool(value: &Literal) -> bool {
     match value {
         Literal::Nil => false,
-        Literal::Bool(val) => val,
+        Literal::Bool(val) => *val,
         _ => true,
     }
 }
@@ -445,17 +464,60 @@ mod test {
         assert_eq!(EvalResult::Ok, res);
         assert_eq!("1\n", std::str::from_utf8(&output).unwrap());
         output.truncate(0);
-        
+
         let statements = "if (true);";
         let res = evaluate_statements_list_from_string(statements, &mut output);
         assert_eq!(EvalResult::Ok, res);
         assert_eq!("", std::str::from_utf8(&output).unwrap());
         output.truncate(0);
-        
+
         let statements = "if true print 1;";
         let res = evaluate_statements_list_from_string(statements, &mut output);
         assert_eq!(EvalResult::ParseError, res);
         assert_eq!("", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+    }
+
+    #[test]
+    fn test_bool_ops() {
+        assert_eq!("true", evaluate_expr_from_string("true or false and false").unwrap().to_string());
+        assert_eq!("false", evaluate_expr_from_string("(true or false) and false").unwrap().to_string());
+
+        assert_eq!("1", evaluate_expr_from_string("nil or 1").unwrap().to_string());
+        assert_eq!("1", evaluate_expr_from_string("1 or nil").unwrap().to_string());
+        assert_eq!("nil", evaluate_expr_from_string("false or nil").unwrap().to_string());
+
+        assert_eq!("nil", evaluate_expr_from_string("nil and 1").unwrap().to_string());
+        assert_eq!("nil", evaluate_expr_from_string("1 and nil").unwrap().to_string());
+        assert_eq!("asd", evaluate_expr_from_string("1 and \"asd\"").unwrap().to_string());
+    }
+
+    #[test]
+    fn test_bool_ops_short_circuit() {
+        let mut output = Vec::<u8>::new();
+
+        let statements = "var a = 1; (a = 2) or (a = 3); print a;";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("2\n", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+
+        let statements = "var a = 1; (a = nil) or (a = 3); print a;";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("3\n", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+
+        let statements = "var a = 1; (a = nil) and (a = 3); print a;";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("nil\n", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+
+        let statements = "var a = 1; (a = 2) and (a = 3); print a;";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("3\n", std::str::from_utf8(&output).unwrap());
         output.truncate(0);
     }
 }
