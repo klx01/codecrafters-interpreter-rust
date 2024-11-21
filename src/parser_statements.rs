@@ -10,6 +10,7 @@ pub(crate) enum StatementBody {
     Scope(Box<Scope>),
     If{condition: Expression, body: Option<Box<Statement>>, else_body: Option<Box<Statement>>},
     While{condition: Expression, body: Option<Box<Statement>>},
+    For{init: Option<Box<Statement>>, condition: Expression, increment: Option<Expression>, body: Option<Box<Statement>>},
 }
 impl Display for StatementBody {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -21,12 +22,12 @@ impl Display for StatementBody {
             StatementBody::If{ condition, body, else_body } => {
                 f.write_fmt(format_args!("if {condition}"))?;
                 if let Some(body) = body {
-                    f.write_fmt(format_args!(" {body}"))?;
+                    f.write_fmt(format_args!(" {{{body}}}"))?;
                 } else {
                     f.write_fmt(format_args!(";"))?;
                 }
                 if let Some(else_body) = else_body {
-                    f.write_fmt(format_args!(" else {else_body}"))
+                    f.write_fmt(format_args!(" else {{{else_body}}}"))
                 } else {
                     Ok(())
                 }
@@ -34,7 +35,25 @@ impl Display for StatementBody {
             StatementBody::While { condition, body } => {
                 f.write_fmt(format_args!("while {condition}"))?;
                 if let Some(body) = body {
-                    f.write_fmt(format_args!(" {body}"))
+                    f.write_fmt(format_args!(" {{{body}}}"))
+                } else {
+                    f.write_fmt(format_args!(";"))
+                }
+            }
+            StatementBody::For { init, condition, increment, body } => {
+                f.write_fmt(format_args!("for ("))?;
+                if let Some(init) = init {
+                    f.write_fmt(format_args!("{init}"))?;
+                } else {
+                    f.write_fmt(format_args!(";"))?;
+                }
+                f.write_fmt(format_args!(" {condition};"))?;
+                if let Some(increment) = increment {
+                    f.write_fmt(format_args!(" {increment}"))?;
+                }
+                f.write_fmt(format_args!(")"))?;
+                if let Some(body) = body {
+                    f.write_fmt(format_args!(" {{{body}}}"))
                 } else {
                     f.write_fmt(format_args!(";"))
                 }
@@ -142,11 +161,11 @@ fn parse_statement(tail: &[Token]) -> Option<(ParseResult, &[Token])> {
         eprintln!("Unexpected end of token stream, expected start of a statement");
         return None;
     };
-    let loc = head.loc;
+    let loc = head.loc; // todo: fix locations, use actual locations instead of head location
     match head.kind {
         TokenKind::SEMICOLON => Some((ParseResult::Nop, tail)),
         TokenKind::PRINT => {
-            let (expr, tail) = parse_expression(tail, None)?;
+            let (expr, tail) = parse_expression(tail, Some(head))?;
             let tail = check_statement_terminated(tail, loc)?;
             let stmt = Statement { body: StatementBody::Print(expr), loc };
             Some((ParseResult::Statement(stmt), tail))
@@ -154,7 +173,7 @@ fn parse_statement(tail: &[Token]) -> Option<(ParseResult, &[Token])> {
         TokenKind::NUMBER | TokenKind::STRING | TokenKind::IDENTIFIER
             | TokenKind::NIL | TokenKind::TRUE | TokenKind::FALSE
             | TokenKind::LEFT_PAREN | TokenKind::MINUS | TokenKind::BANG => {
-            let (expr, tail) = parse_expression(orig_tail, None)?;
+            let (expr, tail) = parse_expression(orig_tail, Some(head))?;
             let tail = check_statement_terminated(tail, loc)?;
             let stmt = Statement { body: StatementBody::Expression(expr), loc };
             Some((ParseResult::Statement(stmt), tail))
@@ -167,7 +186,7 @@ fn parse_statement(tail: &[Token]) -> Option<(ParseResult, &[Token])> {
             };
             let (expr, tail) = match next.kind {
                 TokenKind::EQUAL => {
-                    let (expr, tail) = parse_expression(tail, None)?;
+                    let (expr, tail) = parse_expression(tail, Some(next))?;
                     let tail = check_statement_terminated(tail, loc)?;
                     (expr, tail)
                 }
@@ -205,26 +224,26 @@ fn parse_statement(tail: &[Token]) -> Option<(ParseResult, &[Token])> {
         },
         TokenKind::IF => {
             let _ = expect_token_kind(tail, TokenKind::LEFT_PAREN, loc)?;
-            let (condition, tail) = parse_expression(tail, None)?;
-            let (body, tail) = parse_actual_statement(tail)?;
+            let (condition, tail) = parse_expression(tail, Some(head))?;
+            let (body, tail) = parse_control_flow_body(tail)?;
             let (els, tail) = check_token_kind(tail, TokenKind::ELSE);
             let (else_body, tail) = if els.is_some() {
-                parse_actual_statement(tail)?
+                parse_control_flow_body(tail)?
             } else {
                 (None, tail)
             };
-            let if_stmt = StatementBody::If {
+            let if_body = StatementBody::If {
                 condition,
                 body: body.map(|x| Box::new(x)),
                 else_body: else_body.map(|x| Box::new(x)),
             };
-            let stmt = Statement{body: if_stmt, loc};
+            let stmt = Statement{body: if_body, loc};
             Some((ParseResult::Statement(stmt), tail))
         },
         TokenKind::WHILE => {
             let _ = expect_token_kind(tail, TokenKind::LEFT_PAREN, loc)?;
-            let (condition, tail) = parse_expression(tail, None)?;
-            let (body, tail) = parse_actual_statement(tail)?;
+            let (condition, tail) = parse_expression(tail, Some(head))?;
+            let (body, tail) = parse_control_flow_body(tail)?;
             let while_body = StatementBody::While {
                 condition,
                 body: body.map(|x| Box::new(x)),
@@ -232,11 +251,79 @@ fn parse_statement(tail: &[Token]) -> Option<(ParseResult, &[Token])> {
             let stmt = Statement{body: while_body, loc};
             Some((ParseResult::Statement(stmt), tail))
         },
+        TokenKind::FOR => {
+            let (_, tail) = expect_token_kind(tail, TokenKind::LEFT_PAREN, loc)?;
+            let (init, tail) = parse_actual_statement(tail)?;
+            if let Some(init_stmt) = init.as_ref() {
+                let is_allowed = match init_stmt.body {
+                    StatementBody::Print(_)
+                        | StatementBody::Expression(_)
+                        | StatementBody::VariableDeclaration { .. } => true,
+                    _ => false,
+                };
+                if !is_allowed {
+                    eprintln!("This type of statement is not allowed at the init section of for loop at {}", init_stmt.loc);
+                    return None;
+                }
+            }
+            let (semi, tail) = check_token_kind(tail, TokenKind::SEMICOLON);
+            let (condition, tail) = if semi.is_none() {
+                let (condition, tail) = parse_expression(tail, Some(head))?;
+                let (_, tail) = expect_token_kind(tail, TokenKind::SEMICOLON, loc)?;
+                (condition, tail)
+            } else {
+                (Expression{ body: ExpressionBody::Literal(Literal::Bool(false)), loc }, tail)
+            };
+
+            let (close, tail) = check_token_kind(tail, TokenKind::RIGHT_PAREN);
+            let (increment, tail) = if close.is_none() {
+                let (increment, tail) = parse_expression(tail, Some(head))?;
+                let (_, tail) = expect_token_kind(tail, TokenKind::RIGHT_PAREN, loc)?;
+                (Some(increment), tail)
+            } else {
+                (None, tail)
+            };
+            let (body, tail) = parse_control_flow_body(tail)?;
+
+            let for_body = StatementBody::For {
+                init: init.map(|x| Box::new(x)),
+                condition,
+                increment,
+                body: body.map(|x| Box::new(x)),
+            };
+            let stmt = Statement{body: for_body, loc};
+
+            // added a scope to make sure that variables that are declared in the init part stay in this scope
+            // could be resolved at the evaluation stage, but this way was more simple
+            let wrapper_scope = Scope {
+                statements: vec![stmt],
+                start: loc,
+                end: Location { row: 0, col: 0 }, // todo: set the actual end location
+            };
+            let wrapper_scope = Statement{body: StatementBody::Scope(Box::new(wrapper_scope)), loc};
+
+            Some((ParseResult::Statement(wrapper_scope), tail))
+        },
         _ => {
             eprintln!("Unexpected token {head} at {loc}, expected a start of a statement");
             None
         },
     }
+}
+
+fn parse_control_flow_body(tail: &[Token]) -> Option<(Option<Statement>, &[Token])> {
+    let (stmt, tail) = parse_actual_statement(tail)?;
+    let stmt = match stmt {
+        Some(x) => {
+            if matches!(x.body, StatementBody::VariableDeclaration {..}) {
+                eprintln!("Variable declaration is not allowed as a body of control flow structures for some reason at {}", x.loc);
+                return None;
+            }
+            Some(x)
+        }
+        None => None,
+    };
+    Some((stmt, tail))
 }
 
 fn parse_actual_statement(tail: &[Token]) -> Option<(Option<Statement>, &[Token])> {
@@ -330,15 +417,15 @@ mod test {
     #[test]
     fn test_if() {
         let statements = "if (true) print 1;";
-        let expected = "{ if (group true) print 1.0; }";
+        let expected = "{ if (group true) {print 1.0;} }";
         assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
 
         let statements = "if (true) {print 1; print 2;}";
-        let expected = "{ if (group true) { print 1.0; print 2.0; } }";
+        let expected = "{ if (group true) {{ print 1.0; print 2.0; }} }";
         assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
 
         let statements = "if (true) print 1; print 2;";
-        let expected = "{ if (group true) print 1.0; print 2.0; }";
+        let expected = "{ if (group true) {print 1.0;} print 2.0; }";
         assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
 
         let statements = "if (true);";
@@ -348,34 +435,42 @@ mod test {
         assert!(parse_statement_list_from_string("if true print 1;").is_none());
 
         let statements = "if (true) print 1; else print 2;";
-        let expected = "{ if (group true) print 1.0; else print 2.0; }";
+        let expected = "{ if (group true) {print 1.0;} else {print 2.0;} }";
         assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
 
         let statements = "if (true) print 1; else {print 2; print 3;}";
-        let expected = "{ if (group true) print 1.0; else { print 2.0; print 3.0; } }";
+        let expected = "{ if (group true) {print 1.0;} else {{ print 2.0; print 3.0; }} }";
         assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
 
         let statements = "if (true) print 1; else print 2; print 3;";
-        let expected = "{ if (group true) print 1.0; else print 2.0; print 3.0; }";
+        let expected = "{ if (group true) {print 1.0;} else {print 2.0;} print 3.0; }";
         assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
 
         let statements = "if (true) print 1; else;";
-        let expected = "{ if (group true) print 1.0; }";
+        let expected = "{ if (group true) {print 1.0;} }";
+        assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
+
+        let statements = "if (true) if (false) print 1; else print 2;";
+        let expected = "{ if (group true) {if (group false) {print 1.0;} else {print 2.0;}} }";
+        assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
+
+        let statements = "if (true) {if (false) print 1;} else print 2;";
+        let expected = "{ if (group true) {{ if (group false) {print 1.0;} }} else {print 2.0;} }";
         assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
     }
 
     #[test]
     fn test_while() {
         let statements = "while (true) print 1;";
-        let expected = "{ while (group true) print 1.0; }";
+        let expected = "{ while (group true) {print 1.0;} }";
         assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
 
         let statements = "while (true) {print 1; print 2;}";
-        let expected = "{ while (group true) { print 1.0; print 2.0; } }";
+        let expected = "{ while (group true) {{ print 1.0; print 2.0; }} }";
         assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
 
         let statements = "while (true) print 1; print 2;";
-        let expected = "{ while (group true) print 1.0; print 2.0; }";
+        let expected = "{ while (group true) {print 1.0;} print 2.0; }";
         assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
 
         let statements = "while (true);";
@@ -383,5 +478,28 @@ mod test {
         assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
 
         assert!(parse_statement_list_from_string("while true print 1;").is_none());
+    }
+
+    #[test]
+    fn test_for() {
+        let statements = "for (;;);";
+        let expected = "{ { for (; false;); } }";
+        assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
+
+        let statements = "for (var a = 1; a < 10; a = a + 1) {print a; print 1;}";
+        let expected = "{ { for (var a = 1.0; (< var(a) 10.0); (= var(a) (+ var(a) 1.0))) {{ print var(a); print 1.0; }} } }";
+        assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
+
+        let statements = "for (var a = 1; a < 10; a = a + 1) print a; print 1;";
+        let expected = "{ { for (var a = 1.0; (< var(a) 10.0); (= var(a) (+ var(a) 1.0))) {print var(a);} } print 1.0; }";
+        assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
+
+        assert!(parse_statement_list_from_string("for ({var a = 1;};;);").is_none());
+        assert!(parse_statement_list_from_string("for (if (true) print 1.0;;);").is_none());
+        assert!(parse_statement_list_from_string("for (;{false};);").is_none());
+        assert!(parse_statement_list_from_string("for (var a = 1;;{a = a + 1});").is_none());
+        assert!(parse_statement_list_from_string("for (;;) var a;").is_none());
+        assert!(parse_statement_list_from_string("for (;);").is_none());
+        assert!(parse_statement_list_from_string("for (;;;);").is_none());
     }
 }

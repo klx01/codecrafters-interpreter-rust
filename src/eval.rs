@@ -130,6 +130,31 @@ fn eval_statement(statement: &Statement, memory: &mut Memory, output: &mut impl 
                 }
             }
         }
+        StatementBody::For { init, condition, increment, body } => {
+            if let Some(init) = init {
+                eval_statement(init, memory, output)?;
+            }
+            let mut iter_count = 0;
+            loop {
+                if cfg!(test) {
+                    iter_count += 1;
+                    if iter_count > 100000 {
+                        panic!("for loop reached iteration {iter_count}");
+                    }
+                }
+                if let Some(body) = body {
+                    eval_statement(body, memory, output);
+                }
+                if let Some(increment) = increment {
+                    eval_expr(increment, memory)?;
+                }
+                let cond_result = eval_expr(condition, memory)?;
+                let cond_result = cast_to_bool(&cond_result);
+                if !cond_result {
+                    break;
+                }
+            }
+        }
     }
     Some(())
 }
@@ -495,6 +520,18 @@ mod test {
         assert_eq!(EvalResult::ParseError, res);
         assert_eq!("", std::str::from_utf8(&output).unwrap());
         output.truncate(0);
+
+        let statements = "if (true) if (false) print 1; else print 2;";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("2\n", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+
+        let statements = "if (true) {if (false) print 1;} else print 2;";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
     }
 
     #[test]
@@ -575,6 +612,41 @@ mod test {
         output.truncate(0);
 
         let statements = "var a = 3; while a > 0 print a = a - 1; print 100;";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::ParseError, res);
+        assert_eq!("", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+    }
+
+    #[test]
+    fn test_for() {
+        let mut output = Vec::<u8>::new();
+
+        let statements = "for (;;);";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+
+        let statements = "for (var a = 1; a < 4; a = a + 1) {print a; print 9;}";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("1\n9\n2\n9\n3\n9\n", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+
+        let statements = "for (var a = 1; a < 4; a = a + 1) print a; print 9;";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("1\n2\n3\n9\n", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+
+        let statements = "for (var a = 1; a < 4; a = a + 1) print a; print a;";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::RuntimeError, res);
+        assert_eq!("1\n2\n3\n", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+
+        let statements = "for (;;;);";
         let res = evaluate_statements_list_from_string(statements, &mut output);
         assert_eq!(EvalResult::ParseError, res);
         assert_eq!("", std::str::from_utf8(&output).unwrap());
