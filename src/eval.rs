@@ -135,7 +135,7 @@ fn eval_statement(statement: &Statement, memory: &mut Memory, output: &mut impl 
                 eval_statement(init, memory, output)?;
             }
             let mut iter_count = 0;
-            loop {
+            while cast_to_bool(&eval_expr(condition, memory)?) {
                 if cfg!(test) {
                     iter_count += 1;
                     if iter_count > 100000 {
@@ -147,11 +147,6 @@ fn eval_statement(statement: &Statement, memory: &mut Memory, output: &mut impl 
                 }
                 if let Some(increment) = increment {
                     eval_expr(increment, memory)?;
-                }
-                let cond_result = eval_expr(condition, memory)?;
-                let cond_result = cast_to_bool(&cond_result);
-                if !cond_result {
-                    break;
                 }
             }
         }
@@ -622,7 +617,13 @@ mod test {
     fn test_for() {
         let mut output = Vec::<u8>::new();
 
-        let statements = "for (;;);";
+        /*let statements = "for (;;);";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);*/
+
+        let statements = "for (var a = 0; a > 0; a = a + 1) {}";
         let res = evaluate_statements_list_from_string(statements, &mut output);
         assert_eq!(EvalResult::Ok, res);
         assert_eq!("", std::str::from_utf8(&output).unwrap());

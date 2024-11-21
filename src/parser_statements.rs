@@ -272,7 +272,7 @@ fn parse_statement(tail: &[Token]) -> Option<(ParseResult, &[Token])> {
                 let (_, tail) = expect_token_kind(tail, TokenKind::SEMICOLON, loc)?;
                 (condition, tail)
             } else {
-                (Expression{ body: ExpressionBody::Literal(Literal::Bool(false)), loc }, tail)
+                (Expression{ body: ExpressionBody::Literal(Literal::Bool(true)), loc }, tail)
             };
 
             let (close, tail) = check_token_kind(tail, TokenKind::RIGHT_PAREN);
@@ -483,7 +483,7 @@ mod test {
     #[test]
     fn test_for() {
         let statements = "for (;;);";
-        let expected = "{ { for (; false;); } }";
+        let expected = "{ { for (; true;); } }";
         assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
 
         let statements = "for (var a = 1; a < 10; a = a + 1) {print a; print 1;}";
