@@ -1,4 +1,4 @@
-use std::fmt::{Display, Formatter};
+use std::fmt::{Display, Formatter, Write};
 use crate::tokenizer::{tokenize_string_no_eof, Location, Token, TokenKind};
 
 #[derive(Debug)]
@@ -9,6 +9,7 @@ pub(crate) enum ExpressionBody {
     Grouping(Box<Expression>),
     Variable(String),
     Assignment(Box<AssignmentExpression>),
+    Call{name: String, args: Vec<Expression>},
 }
 #[derive(Debug)]
 pub(crate) struct Expression {
@@ -26,6 +27,13 @@ impl Display for ExpressionBody {
             ExpressionBody::Binary(ex) => f.write_fmt(format_args!("({} {} {})", ex.op, ex.left, ex.right)),
             ExpressionBody::Variable(name) => f.write_fmt(format_args!("var({name})")),
             ExpressionBody::Assignment(ass) => f.write_fmt(format_args!("(= var({}) {})", ass.var, ass.expr)),
+            ExpressionBody::Call{ name, args } => {
+                f.write_fmt(format_args!("(call {name}"))?;
+                for arg in args {
+                    f.write_fmt(format_args!(" {arg}"))?;
+                }
+                f.write_char(')')
+            },
         }
     }
 }
@@ -211,7 +219,14 @@ fn parse_operand<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Ex
 
     match token.kind {
         TokenKind::IDENTIFIER => {
-            let body = ExpressionBody::Variable(token.code.clone()); // todo: check if we can remove copying here
+            let (paren, tail) = check_token_kind(tail, TokenKind::LEFT_PAREN);
+            let value = token.code.clone(); // todo: check if we can remove copying here
+            let (body, tail) = if paren.is_some() {
+                let (args, tail) = parse_call_args(tail, token)?;
+                (ExpressionBody::Call{ name: value, args }, tail)
+            } else {
+                (ExpressionBody::Variable(value), tail)
+            };
             return Some((Expression{ body, loc: token.loc }, tail));
         }
         _ => {},
@@ -237,19 +252,7 @@ fn parse_operand<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Ex
 
     if token.kind == TokenKind::LEFT_PAREN {
         let (inner, tail) = parse_expression(tail, Some(token))?;
-        let Some((next, tail)) = tail.split_first() else {
-            eprintln!("Parenthesis that was opened at {} is never closed", token.loc);
-            return None;
-        };
-        if next.kind != TokenKind::RIGHT_PAREN {
-            eprintln!(
-                "Expected closing parenthesis at {}, got {:?} instead. Parenthesis was opened at {}",
-                next.loc,
-                next.kind,
-                token.loc,
-            );
-            return None;
-        }
+        let (_, tail) = expect_token_kind(tail, TokenKind::RIGHT_PAREN, token.loc)?;
         let body = ExpressionBody::Grouping(Box::new(inner));
         return Some((Expression{body, loc: token.loc}, tail));
     }
@@ -270,6 +273,56 @@ fn parse_operand<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Ex
     None
 }
 
+fn parse_call_args<'a>(mut tail: &'a [Token], parent: &'a Token) -> Option<(Vec<Expression>, &'a [Token])> {
+    let mut args = vec![];
+    loop {
+        let (paren, tail2) = check_token_kind(tail, TokenKind::RIGHT_PAREN);
+        tail = tail2;
+        if paren.is_some() {
+            return Some((args, tail));
+        }
+        let (expression, tail2) = parse_expression(tail, Some(parent))?; // todo: fix parent for parse expression
+        tail = tail2;
+        args.push(expression);
+        let Some((next, tail2)) = tail.split_first() else {
+            eprintln!("Unexpected end of token stream, expected ) or , in arguments list for a function call at {}", parent.loc); // todo: fix location
+            return None;
+        };
+        tail = tail2;
+        match next.kind {
+            TokenKind::COMMA => {},
+            TokenKind::RIGHT_PAREN => return Some((args, tail)),
+            _ => {
+                eprintln!("Expected ) or , but found {next} at {}", next.loc);
+                return None;
+            },
+        }
+    }
+}
+
+pub(crate) fn expect_token_kind(tail: &[Token], expected: TokenKind, start_loc: Location) -> Option<(&Token, &[Token])> {
+    let Some((head, tail)) = tail.split_first() else {
+        eprintln!("Unexpected end of token stream, expected {expected:?} in a statement that starts at {start_loc}");
+        return None;
+    };
+    if head.kind == expected {
+        Some((head, tail))
+    } else {
+        eprintln!("Expected {expected:?}, found {head} at {}", head.loc);
+        None
+    }
+}
+
+pub(crate) fn check_token_kind(tail_orig: &[Token], expected: TokenKind) -> (Option<&Token>, &[Token]) {
+    let Some((head, tail)) = tail_orig.split_first() else {
+        return (None, tail_orig);
+    };
+    if head.kind == expected {
+        (Some(head), tail)
+    } else {
+        (None, tail_orig)
+    }
+}
 
 #[cfg(test)]
 mod test {
@@ -314,7 +367,19 @@ mod test {
         assert_eq!("(= var(a) (= var(b) (= var(c) (+ 1.0 2.0))))", parse_expression_from_string("a = b = c = 1 + 2").unwrap().to_string());
         assert_eq!("1.0", parse_expression_from_string("1 = a").unwrap().to_string());
         assert_eq!("(+ 1.0 var(a))", parse_expression_from_string("1 + a = 1").unwrap().to_string());
-        
+
         assert_eq!("(or (== var(a) var(b)) (and (== var(a) var(c)) (== var(z) var(x))))", parse_expression_from_string("a == b or a == c and z == x").unwrap().to_string());
+    }
+
+    #[test]
+    fn test_parse_call() {
+        assert_eq!("(call foo)", parse_expression_from_string("foo()").unwrap().to_string());
+        assert_eq!("(call foo 1.0 2.0 3.0)", parse_expression_from_string("foo(1, 2, 3)").unwrap().to_string());
+        assert_eq!("(call foo 1.0 2.0 3.0)", parse_expression_from_string("foo(1, 2, 3,)").unwrap().to_string());
+        assert_eq!("(call foo (call bar) (= var(a) (+ 1.0 2.0)))", parse_expression_from_string("foo(bar(), a = 1 + 2)").unwrap().to_string());
+        assert!(parse_expression_from_string("foo(").is_none());
+        assert!(parse_expression_from_string("foo(1").is_none());
+        assert!(parse_expression_from_string("foo(1,").is_none());
+        assert!(parse_expression_from_string("foo(1,]").is_none());
     }
 }

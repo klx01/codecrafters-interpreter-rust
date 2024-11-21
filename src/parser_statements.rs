@@ -1,5 +1,5 @@
-use std::fmt::{Display, Formatter};
-use crate::parser_expressions::{parse_expression, Expression, ExpressionBody, Literal};
+use std::fmt::{Display, Formatter, Write};
+use crate::parser_expressions::{parse_expression, Expression, ExpressionBody, Literal, expect_token_kind, check_token_kind};
 use crate::tokenizer::{tokenize_string_no_eof, Location, Token, TokenKind};
 
 #[derive(Debug)]
@@ -24,7 +24,7 @@ impl Display for StatementBody {
                 if let Some(body) = body {
                     f.write_fmt(format_args!(" {{{body}}}"))?;
                 } else {
-                    f.write_fmt(format_args!(";"))?;
+                    f.write_char(';')?;
                 }
                 if let Some(else_body) = else_body {
                     f.write_fmt(format_args!(" else {{{else_body}}}"))
@@ -37,25 +37,25 @@ impl Display for StatementBody {
                 if let Some(body) = body {
                     f.write_fmt(format_args!(" {{{body}}}"))
                 } else {
-                    f.write_fmt(format_args!(";"))
+                    f.write_char(';')
                 }
             }
             StatementBody::For { init, condition, increment, body } => {
-                f.write_fmt(format_args!("for ("))?;
+                f.write_str("for (")?;
                 if let Some(init) = init {
                     f.write_fmt(format_args!("{init}"))?;
                 } else {
-                    f.write_fmt(format_args!(";"))?;
+                    f.write_char(';')?;
                 }
                 f.write_fmt(format_args!(" {condition};"))?;
                 if let Some(increment) = increment {
                     f.write_fmt(format_args!(" {increment}"))?;
                 }
-                f.write_fmt(format_args!(")"))?;
+                f.write_char(')')?;
                 if let Some(body) = body {
                     f.write_fmt(format_args!(" {{{body}}}"))
                 } else {
-                    f.write_fmt(format_args!(";"))
+                    f.write_char(';')
                 }
             }
         }
@@ -343,30 +343,6 @@ fn parse_actual_statement(tail: &[Token]) -> Option<(Option<Statement>, &[Token]
 fn check_statement_terminated(tail: &[Token], start_loc: Location) -> Option<&[Token]> {
     let (_, tail) = expect_token_kind(tail, TokenKind::SEMICOLON, start_loc)?;
     Some(tail)
-}
-
-fn expect_token_kind(tail: &[Token], expected: TokenKind, start_loc: Location) -> Option<(&Token, &[Token])> {
-    let Some((head, tail)) = tail.split_first() else {
-        eprintln!("Unexpected end of token stream, expected {expected:?} in a statement that starts at {start_loc}");
-        return None;
-    };
-    if head.kind == expected {
-        Some((head, tail))
-    } else {
-        eprintln!("Expected {expected:?}, found {head} at {}", head.loc);
-        None
-    }
-}
-
-fn check_token_kind(tail_orig: &[Token], expected: TokenKind) -> (Option<&Token>, &[Token]) {
-    let Some((head, tail)) = tail_orig.split_first() else {
-        return (None, tail_orig);
-    };
-    if head.kind == expected {
-        (Some(head), tail)
-    } else {
-        (None, tail_orig)
-    }
 }
 
 #[cfg(test)]

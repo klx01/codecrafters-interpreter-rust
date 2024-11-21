@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::io::Write;
+use std::time::SystemTime;
 use crate::parser_expressions::{parse_expression_from_string, BinaryOperator, Expression, ExpressionBody, Literal, UnaryOperator};
 use crate::parser_statements::{parse_statement_list_from_string, Scope, Statement, StatementBody};
 use crate::tokenizer::Location;
@@ -265,6 +266,18 @@ fn eval_expr(expr: &Expression, memory: &mut Memory) -> Option<Literal> {
             }
             Some(value)
         },
+        ExpressionBody::Call { name, args } => {
+            match name.as_str() {
+                "clock" => {
+                    check_args_count(args, 0, name, loc)?;
+                    Some(Literal::Number(time_now()?))
+                },
+                _ => {
+                    eprintln!("Unknown function name {name} at {loc}");
+                    None
+                },
+            }
+        }
     }
 }
 
@@ -296,6 +309,30 @@ fn process_number_literals(left: &Literal, right: &Literal, res: impl Fn(f64, f6
             None
         }
     }
+}
+
+fn check_args_count(args: &[Expression], expected: usize, name: &str, loc: Location) -> Option<()> {
+    let count = args.len();
+    if count < expected {
+        eprintln!("Too few arguments when calling {name} at {loc}, expected {expected}, got {count}");
+        return None;
+    }
+    if count > expected {
+        eprintln!("Too many arguments when calling {name} at {loc}, expected {expected}, got {count}");
+        return None;
+    }
+    Some(())
+}
+
+fn time_now() -> Option<f64> {
+    let now = match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(x) => x,
+        Err(err) => {
+            eprintln!("{err}");
+            return None;
+        }
+    };
+    Some(now.as_secs_f64())
 }
 
 #[cfg(test)]
@@ -650,6 +687,30 @@ mod test {
         let statements = "for (;;;);";
         let res = evaluate_statements_list_from_string(statements, &mut output);
         assert_eq!(EvalResult::ParseError, res);
+        assert_eq!("", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+    }
+
+    #[test]
+    fn test_functions() {
+        let mut output = Vec::<u8>::new();
+        let expected_min = time_now().unwrap() - 100.0;
+
+        let statements = "print clock();";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::Ok, res);
+        assert!(std::str::from_utf8(&output).unwrap().trim().parse::<f64>().unwrap() > expected_min);
+        output.truncate(0);
+
+        let statements = "print clock(;";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::ParseError, res);
+        assert_eq!("", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+
+        let statements = "print clock(1);";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::RuntimeError, res);
         assert_eq!("", std::str::from_utf8(&output).unwrap());
         output.truncate(0);
     }
