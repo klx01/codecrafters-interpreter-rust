@@ -14,6 +14,7 @@ pub(crate) enum StatementBody {
     While{condition: Expression, body: Option<Box<Statement>>},
     For{init: Option<Box<Statement>>, condition: Expression, increment: Option<Expression>, body: Option<Box<Statement>>},
     FunctionDeclaration(FunctionRef),
+    Return(Expression),
 }
 impl Display for StatementBody {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -69,6 +70,7 @@ impl Display for StatementBody {
                 }
                 f.write_fmt(format_args!(") {}", func.body))
             },
+            StatementBody::Return(expr) => f.write_fmt(format_args!("return {expr};")),
         }
     }
 }
@@ -331,6 +333,19 @@ fn parse_statement(tail: &[Token]) -> Option<(ParseResult, &[Token])> {
             let stmt = Statement{body, loc};
             Some((ParseResult::Statement(stmt), tail))
         },
+        TokenKind::RETURN => {
+            let (semicolon, tail) = check_token_kind(tail, TokenKind::SEMICOLON);
+            let (expr, tail) = if semicolon.is_none() {
+                let (expr, tail) = parse_expression(tail, Some(head))?;
+                let tail = check_statement_terminated(tail, loc)?;
+                (expr, tail)
+            } else {
+                let expr = Expression { body: ExpressionBody::Literal(Value::Nil), loc };
+                (expr, tail)
+            };
+            let stmt = Statement { body: StatementBody::Return(expr), loc };
+            Some((ParseResult::Statement(stmt), tail))
+        },
         _ => {
             eprintln!("Unexpected token {head} at {loc}, expected a start of a statement");
             None
@@ -556,5 +571,13 @@ mod test {
         assert!(parse_statement_list_from_string("fun foo() 1").is_none());
         assert!(parse_statement_list_from_string("fun foo() {").is_none());
         assert!(parse_statement_list_from_string("fun foo( {}").is_none());
+        
+        let statements = "fun foo() {return 1;}";
+        let expected = "{ fun foo() { return 1.0; } }";
+        assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
+        
+        let statements = "fun foo() {return;}";
+        let expected = "{ fun foo() { return nil; } }";
+        assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
     }
 }

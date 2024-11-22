@@ -23,6 +23,13 @@ impl EvalResult {
     }
 }
 
+#[derive(Debug)]
+enum StatementResult {
+    Next,
+    Return(Value),
+    // could also be break or continue, but this language does not have those
+}
+
 pub(crate) fn evaluate_expr_from_string(str: &str) -> Option<Value> {
     let expr = parse_expression_from_string(str)?;
     let mut memory = Memory::new();
@@ -35,37 +42,57 @@ pub(crate) fn evaluate_statements_list_from_string(str: &str, output: &mut impl 
         return EvalResult::ParseError;
     };
     let mut memory = Memory::new();
-    if eval_scope(&scope, &mut memory, output, init_native_functions).is_none() {
-        return EvalResult::RuntimeError;
+    let result = eval_scope(&scope, &mut memory, output, init_native_functions);
+    match result {
+        None => EvalResult::RuntimeError,
+        Some(x) => match x {
+            StatementResult::Next => EvalResult::Ok,
+            other => {
+                eprintln!("Unexpected {other:?}"); // todo: needs location
+                EvalResult::RuntimeError
+            }
+        },
     }
-    EvalResult::Ok
 }
 
-fn eval_scope(scope: &Scope, memory: &mut Memory, output: &mut impl Write, init_scope: impl FnOnce(&mut Memory) -> Option<()>) -> Option<()> {
+fn eval_scope(scope: &Scope, memory: &mut Memory, output: &mut impl Write, init_scope: impl FnOnce(&mut Memory) -> Option<()>) -> Option<StatementResult> {
     memory.enter_scope();
     init_scope(memory)?;
     for statement in &scope.statements {
-        if eval_statement(statement, memory, output).is_none() {
-            memory.leave_scope();
-            return None;
+        let res = eval_statement(statement, memory, output);
+        let res = match res {
+            Some(x) => x,
+            None => {
+                memory.leave_scope();
+                return None;
+            }
+        };
+        match res {
+            StatementResult::Next => {}
+            other => {
+                memory.leave_scope();
+                return Some(other);
+            }
         }
     }
     memory.leave_scope();
-    Some(())
+    Some(StatementResult::Next)
 }
 
-fn eval_statement(statement: &Statement, memory: &mut Memory, output: &mut impl Write) -> Option<()> {
+fn eval_statement(statement: &Statement, memory: &mut Memory, output: &mut impl Write) -> Option<StatementResult> {
     match &statement.body {
         StatementBody::Print(expr) => {
             let res = eval_expr(expr, memory, output)?;
             output.write_fmt(format_args!("{res}\n")).unwrap();
         },
-        StatementBody::Expression(expr) => { eval_expr(expr, memory, output)?; () },
+        StatementBody::Expression(expr) => { eval_expr(expr, memory, output)?; },
         StatementBody::VariableDeclaration { name, value } => {
             let value = eval_expr(value, memory, output)?;
             memory.declare_variable(name, value, statement.loc)?;
         },
-        StatementBody::Scope(scope) => eval_scope(scope, memory, output, |mem| Some(()))?,
+        StatementBody::Scope(scope) => {
+            return eval_scope(scope, memory, output, |mem| Some(()));
+        },
         StatementBody::If { condition, body, else_body } => {
             let condition_result = eval_expr(&condition, memory, output)?;
             let condition_result = cast_to_bool(&condition_result);
@@ -75,7 +102,7 @@ fn eval_statement(statement: &Statement, memory: &mut Memory, output: &mut impl 
                 else_body
             };
             if let Some(eval_body) = eval_body {
-                eval_statement(eval_body, memory, output);
+                return eval_statement(eval_body, memory, output);
             }
         }
         StatementBody::While { condition, body } => {
@@ -88,7 +115,11 @@ fn eval_statement(statement: &Statement, memory: &mut Memory, output: &mut impl 
                     }
                 }
                 if let Some(body) = body {
-                    eval_statement(body, memory, output);
+                    let result = eval_statement(body, memory, output)?;
+                    match result {
+                        StatementResult::Next => {}
+                        StatementResult::Return(x) => return Some(StatementResult::Return(x)),
+                    }
                 }
             }
         }
@@ -105,7 +136,11 @@ fn eval_statement(statement: &Statement, memory: &mut Memory, output: &mut impl 
                     }
                 }
                 if let Some(body) = body {
-                    eval_statement(body, memory, output);
+                    let result = eval_statement(body, memory, output)?;
+                    match result {
+                        StatementResult::Next => {}
+                        StatementResult::Return(x) => return Some(StatementResult::Return(x)),
+                    }
                 }
                 if let Some(increment) = increment {
                     eval_expr(increment, memory, output)?;
@@ -115,8 +150,12 @@ fn eval_statement(statement: &Statement, memory: &mut Memory, output: &mut impl 
         StatementBody::FunctionDeclaration(func) => {
             memory.declare_user_function(func.clone(), statement.loc)?;
         }
+        StatementBody::Return(expr) => {
+            let res = eval_expr(expr, memory, output)?;
+            return Some(StatementResult::Return(res));
+        }
     }
-    Some(())
+    Some(StatementResult::Next)
 }
 
 fn eval_expr(expr: &Expression, memory: &mut Memory, output: &mut impl Write) -> Option<Value> {
@@ -239,13 +278,17 @@ fn eval_expr(expr: &Expression, memory: &mut Memory, output: &mut impl Write) ->
                     let function = function.inner;
                     check_args_count(args, function.args.len(), name, loc)?;
                     let arg_values = eval_args(args, memory, output)?;
-                    eval_scope(&function.body, memory, output, |mem| {
+                    let result = eval_scope(&function.body, memory, output, |mem| {
                         for (index, arg_value) in arg_values.into_iter().enumerate() {
                             mem.declare_variable(&function.args[index], arg_value, loc)?;
                         }
                         Some(())
                     })?;
-                    Some(Value::Nil)
+                    let return_value = match result {
+                        StatementResult::Next => Value::Nil,
+                        StatementResult::Return(x) => x,
+                    };
+                    Some(return_value)
                 }
                 _ => {
                     eprintln!("{name} is not callable at {loc}");
@@ -555,13 +598,25 @@ mod test {
         assert_eval_with_output("fun foo(a, b) {print a + b;} foo(1, 2 + 3); ", EvalResult::Ok, "6\n", output);
         assert_eval_with_output("foo(); ", EvalResult::RuntimeError, "", output);
         assert_eval_with_output("fun foo(); ", EvalResult::ParseError, "", output);
-        
+
         assert_eval_with_output("fun foo() {}; var foo = 1;", EvalResult::RuntimeError, "", output);
         assert_eval_with_output("fun foo() {}; var foo = foo;", EvalResult::RuntimeError, "", output);
         assert_eval_with_output("var foo = 1; fun foo() {};", EvalResult::RuntimeError, "", output);
         assert_eval_with_output("fun foo() {}; var test = foo; print test;", EvalResult::Ok, "<fn foo>\n", output);
         assert_eval_with_output("fun foo() {}; {var foo = 1; print foo;} print foo;", EvalResult::Ok, "1\n<fn foo>\n", output);
         assert_eval_with_output("var foo = 1; {fun foo() {}; print foo;} print foo;", EvalResult::Ok, "<fn foo>\n1\n", output);
+    }
+
+    #[test]
+    fn test_return() {
+        let mut output = Vec::<u8>::new();
+        let output = &mut output;
+        assert_eval_with_output("fun foo() {{{{return 1;}}}} print foo();", EvalResult::Ok, "1\n", output);
+        assert_eval_with_output("fun foo() {return;} print foo();", EvalResult::Ok, "nil\n", output);
+        assert_eval_with_output(
+            "fun foo(cond) {for (;;) while (true) if (cond) return 1; else return 2;} print foo(true); print foo(false);", 
+            EvalResult::Ok, "1\n2\n", output
+        );
     }
     
     fn assert_eval_with_output(statements: &str, expect_result: EvalResult, expect_output: &str, output: &mut Vec<u8>) {
