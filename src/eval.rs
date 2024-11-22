@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::io::Write;
+use std::rc::Rc;
 use std::time::SystemTime;
 use crate::parser_expressions::{parse_expression_from_string, BinaryOperator, Expression, ExpressionBody, UnaryOperator};
 use crate::parser_statements::{parse_statement_list_from_string, Scope, Statement, StatementBody};
@@ -223,9 +224,10 @@ fn eval_expr(expr: &Expression, memory: &mut Memory) -> Option<Value> {
                     (Value::Number(left), Value::Number(right)) => {
                         Some(Value::Number(left + right))
                     }
-                    (Value::String(mut left), Value::String(right)) => {
-                        left.push_str(&right);
-                        Some(Value::String(left))
+                    (Value::String(left), Value::String(right)) => {
+                        // todo: this is really not optimal if this is the only remaining usage of left, or if any of them is empty
+                        let res = format!("{left}{right}");
+                        Some(Value::String(Rc::new(res)))
                     }
                     (left, right) => {
                         eprintln!("expected both operands to be numbers or strings for {} at {loc}, got {left:?} and {right:?}", expr.op);
@@ -341,6 +343,7 @@ fn time_now() -> Option<f64> {
 
 #[cfg(test)]
 mod test {
+    use std::rc::Rc;
     use super::*;
 
     #[test]
@@ -356,7 +359,7 @@ mod test {
         assert_eq!("false", res.unwrap().to_string());
 
         let res = evaluate_expr_from_string("\"Hello, World!\"");
-        assert_eq!(Some(Value::String("Hello, World!".to_string())), res);
+        assert_eq!(Some(Value::String(Rc::new("Hello, World!".to_string()))), res);
         assert_eq!("Hello, World!", res.unwrap().to_string());
         let res = evaluate_expr_from_string("10.40");
         assert_eq!(Some(Value::Number(10.4)), res);
@@ -451,7 +454,7 @@ mod test {
     fn test_variables() {
         let mut output = Vec::<u8>::new();
 
-        let statements = "var a = 1; var a = a + a +3; print a;";
+        let statements = "var a = 1; var a = a + a + 3; print a;";
         let res = evaluate_statements_list_from_string(statements, &mut output);
         assert_eq!(EvalResult::Ok, res);
         assert_eq!("5\n", std::str::from_utf8(&output).unwrap());
@@ -473,6 +476,16 @@ mod test {
         let res = evaluate_statements_list_from_string(statements, &mut output);
         assert_eq!(EvalResult::RuntimeError, res);
         assert_eq!("", std::str::from_utf8(&output).unwrap());
+        output.truncate(0);
+    }
+    
+    #[test]
+    fn test_strings() {
+        let mut output = Vec::<u8>::new();
+        let statements = "var a = \"test\"; var b = a; b = b + b; print a; print b;";
+        let res = evaluate_statements_list_from_string(statements, &mut output);
+        assert_eq!(EvalResult::Ok, res);
+        assert_eq!("test\ntesttest\n", std::str::from_utf8(&output).unwrap());
         output.truncate(0);
     }
 

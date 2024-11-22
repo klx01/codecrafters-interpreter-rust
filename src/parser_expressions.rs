@@ -1,4 +1,5 @@
 use std::fmt::{Display, Formatter, Write};
+use std::rc::Rc;
 use crate::tokenizer::{tokenize_string_no_eof, Location, Token, TokenKind};
 use crate::value::Value;
 
@@ -225,7 +226,11 @@ fn parse_operand<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Ex
                 .parse()
                 .expect("got an invalid numeric literal")
         )),
-        TokenKind::STRING => Some(Value::String(token.literal.clone().expect("got a literal token without literal value"))), // todo: check if we can remove copying here
+        TokenKind::STRING => {
+            // todo: check if we can remove copying here
+            let string = token.literal.clone().expect("got a literal token without literal value");
+            Some(Value::String(Rc::new(string))) 
+        },
         _ => None,
     };
     if let Some(literal) = literal {
