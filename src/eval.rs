@@ -1,11 +1,11 @@
-use std::collections::HashMap;
-use std::io::Write;
+use std::io::{stdout, Write};
 use std::rc::Rc;
 use std::time::SystemTime;
 use crate::parser_expressions::{parse_expression_from_string, BinaryOperator, Expression, ExpressionBody, UnaryOperator};
 use crate::parser_statements::{parse_statement_list_from_string, Scope, Statement, StatementBody};
 use crate::tokenizer::Location;
 use crate::value::Value;
+use crate::memory::Memory;
 
 #[derive(PartialEq, Debug)]
 pub(crate) enum EvalResult {
@@ -23,52 +23,10 @@ impl EvalResult {
     }
 }
 
-type MemoryScope = HashMap<String, Value>;
-#[derive(Default)]
-struct Memory {
-    scopes: Vec<MemoryScope>,
-}
-impl Memory {
-    fn new() -> Self {
-        Self::default()
-    }
-    fn enter_scope(&mut self) {
-        self.scopes.push(Default::default());
-    }
-    fn leave_scope(&mut self) {
-        self.scopes.pop();
-    }
-    fn declare(&mut self, name: &str, value: Value) {
-        let scope = self.scopes.last_mut().expect("No scopes left in memory!");
-        if let Some(val_ref) = scope.get_mut(name) {
-            *val_ref = value;
-        } else {
-            scope.insert(name.to_string(), value);
-        }
-    }
-    fn assign(&mut self, name: &str, value: Value) -> bool {
-        for scope in self.scopes.iter_mut().rev() {
-            if let Some(val) = scope.get_mut(name) {
-                *val = value;
-                return true;
-            }
-        }
-        false
-    }
-    fn get(&self, name: &str) -> Option<&Value> {
-        for scope in self.scopes.iter().rev() {
-            if let Some(value) = scope.get(name) {
-                return Some(value);
-            }
-        }
-        None
-    }
-}
-
 pub(crate) fn evaluate_expr_from_string(str: &str) -> Option<Value> {
     let expr = parse_expression_from_string(str)?;
     let mut memory = Memory::new();
-    let result = eval_expr(&expr, &mut memory)?;
+    let result = eval_expr(&expr, &mut memory, &mut stdout())?;
     Some(result)
 }
 
@@ -77,14 +35,15 @@ pub(crate) fn evaluate_statements_list_from_string(str: &str, output: &mut impl 
         return EvalResult::ParseError;
     };
     let mut memory = Memory::new();
-    if eval_scope(&scope, &mut memory, output).is_none() {
+    if eval_scope(&scope, &mut memory, output, init_native_functions).is_none() {
         return EvalResult::RuntimeError;
     }
     EvalResult::Ok
 }
 
-fn eval_scope(scope: &Scope, memory: &mut Memory, output: &mut impl Write) -> Option<()> {
+fn eval_scope(scope: &Scope, memory: &mut Memory, output: &mut impl Write, init_scope: impl FnOnce(&mut Memory) -> Option<()>) -> Option<()> {
     memory.enter_scope();
+    init_scope(memory)?;
     for statement in &scope.statements {
         if eval_statement(statement, memory, output).is_none() {
             memory.leave_scope();
@@ -98,17 +57,17 @@ fn eval_scope(scope: &Scope, memory: &mut Memory, output: &mut impl Write) -> Op
 fn eval_statement(statement: &Statement, memory: &mut Memory, output: &mut impl Write) -> Option<()> {
     match &statement.body {
         StatementBody::Print(expr) => {
-            let res = eval_expr(expr, memory)?;
+            let res = eval_expr(expr, memory, output)?;
             output.write_fmt(format_args!("{res}\n")).unwrap();
         },
-        StatementBody::Expression(expr) => { eval_expr(expr, memory)?; () },
+        StatementBody::Expression(expr) => { eval_expr(expr, memory, output)?; () },
         StatementBody::VariableDeclaration { name, value } => {
-            let value = eval_expr(value, memory)?;
-            memory.declare(name, value);
+            let value = eval_expr(value, memory, output)?;
+            memory.declare_variable(name, value, statement.loc)?;
         },
-        StatementBody::Scope(scope) => eval_scope(scope, memory, output)?,
+        StatementBody::Scope(scope) => eval_scope(scope, memory, output, |mem| Some(()))?,
         StatementBody::If { condition, body, else_body } => {
-            let condition_result = eval_expr(&condition, memory)?;
+            let condition_result = eval_expr(&condition, memory, output)?;
             let condition_result = cast_to_bool(&condition_result);
             let eval_body = if condition_result {
                 body
@@ -121,7 +80,7 @@ fn eval_statement(statement: &Statement, memory: &mut Memory, output: &mut impl 
         }
         StatementBody::While { condition, body } => {
             let mut iter_count = 0;
-            while cast_to_bool(&eval_expr(condition, memory)?) {
+            while cast_to_bool(&eval_expr(condition, memory, output)?) {
                 if cfg!(test) {
                     iter_count += 1;
                     if iter_count > 100000 {
@@ -138,7 +97,7 @@ fn eval_statement(statement: &Statement, memory: &mut Memory, output: &mut impl 
                 eval_statement(init, memory, output)?;
             }
             let mut iter_count = 0;
-            while cast_to_bool(&eval_expr(condition, memory)?) {
+            while cast_to_bool(&eval_expr(condition, memory, output)?) {
                 if cfg!(test) {
                     iter_count += 1;
                     if iter_count > 100000 {
@@ -149,23 +108,23 @@ fn eval_statement(statement: &Statement, memory: &mut Memory, output: &mut impl 
                     eval_statement(body, memory, output);
                 }
                 if let Some(increment) = increment {
-                    eval_expr(increment, memory)?;
+                    eval_expr(increment, memory, output)?;
                 }
             }
         }
-        StatementBody::FunctionDeclaration { name, args, body } => {
-            todo!()
+        StatementBody::FunctionDeclaration(func) => {
+            memory.declare_user_function(func.clone(), statement.loc)?;
         }
     }
     Some(())
 }
 
-fn eval_expr(expr: &Expression, memory: &mut Memory) -> Option<Value> {
+fn eval_expr(expr: &Expression, memory: &mut Memory, output: &mut impl Write) -> Option<Value> {
     let loc = expr.loc;
     match &expr.body {
         ExpressionBody::Literal(x) => Some(x.clone()), // todo: is it possible to not clone this when we don't actually need to?
         ExpressionBody::Unary(expr) => {
-            let value = eval_expr(&expr.ex, memory)?;
+            let value = eval_expr(&expr.ex, memory, output)?;
             match expr.op {
                 UnaryOperator::Minus => match value {
                     Value::Number(n) => Some(Value::Number(-n)),
@@ -178,25 +137,25 @@ fn eval_expr(expr: &Expression, memory: &mut Memory) -> Option<Value> {
             }
         }
         ExpressionBody::Binary(expr) => {
-            let left = eval_expr(&expr.left, memory)?;
+            let left = eval_expr(&expr.left, memory, output)?;
             match expr.op {
                 BinaryOperator::Or => {
                     if cast_to_bool(&left) {
                         return Some(left);
                     }
-                    let right = eval_expr(&expr.right, memory)?;
+                    let right = eval_expr(&expr.right, memory, output)?;
                     return Some(right);
                 },
                 BinaryOperator::And => {
                     if !cast_to_bool(&left) {
                         return Some(left);
                     }
-                    let right = eval_expr(&expr.right, memory)?;
+                    let right = eval_expr(&expr.right, memory, output)?;
                     return Some(right);
                 },
                 _ => {},
             };
-            let right = eval_expr(&expr.right, memory)?;
+            let right = eval_expr(&expr.right, memory, output)?;
             match expr.op {
                 BinaryOperator::Equal => Some(Value::Bool(is_equal(left, right))),
                 BinaryOperator::NotEqual => Some(Value::Bool(!is_equal(left, right))),
@@ -253,38 +212,63 @@ fn eval_expr(expr: &Expression, memory: &mut Memory) -> Option<Value> {
                 BinaryOperator::And => unreachable!(),
             }
         },
-        ExpressionBody::Grouping(expr) => eval_expr(expr, memory),
+        ExpressionBody::Grouping(expr) => eval_expr(expr, memory, output),
         ExpressionBody::Variable(name) => {
-            if let Some(val) = memory.get(&name) {
-                Some(val.clone())
-            } else {
-                eprintln!("Can not read an undefined variable {name} at {loc}");
-                None
-            }
+            memory.get(&name, loc)
         }
         ExpressionBody::Assignment(expr) => {
             let name = &expr.var;
-            let value = eval_expr(&expr.expr, memory)?;
-            let is_found = memory.assign(name, value.clone());
-            if !is_found {
-                eprintln!("Can not assign to an undefined variable {name} at {loc}");
-                return None;
-            }
+            let value = eval_expr(&expr.expr, memory, output)?;
+            memory.assign(name, value.clone(), loc)?;
             Some(value)
         },
         ExpressionBody::Call { name, args } => {
-            match name.as_str() {
-                "clock" => {
-                    check_args_count(args, 0, name, loc)?;
-                    Some(Value::Number(time_now()?))
-                },
+            let function = memory.get(name, loc)?;
+            match function {
+                Value::NativeFunction(name) => match name {
+                    "clock" => {
+                        check_args_count(args, 0, name, loc)?;
+                        Some(Value::Number(time_now()?))
+                    },
+                    _ => {
+                        eprintln!("Native function {name} is not implemented, called at {loc}");
+                        None
+                    },
+                }
+                Value::UserFunction(function) => {
+                    let function = function.inner;
+                    check_args_count(args, function.args.len(), name, loc)?;
+                    let arg_values = eval_args(args, memory, output)?;
+                    eval_scope(&function.body, memory, output, |mem| {
+                        for (index, arg_value) in arg_values.into_iter().enumerate() {
+                            mem.declare_variable(&function.args[index], arg_value, loc)?;
+                        }
+                        Some(())
+                    })?;
+                    Some(Value::Nil)
+                }
                 _ => {
-                    eprintln!("Unknown function name {name} at {loc}");
+                    eprintln!("{name} is not callable at {loc}");
                     None
                 },
             }
         }
     }
+}
+
+fn eval_args(args: &[Expression], memory: &mut Memory, output: &mut impl Write) -> Option<Vec<Value>> {
+    let mut arg_values = Vec::with_capacity(args.len());
+    for arg in args {
+        arg_values.push(eval_expr(arg, memory, output)?);
+    }
+    Some(arg_values)
+}
+
+fn init_native_functions(memory: &mut Memory) -> Option<()> {
+    for func in ["clock"] {
+        memory.declare_native_function(func)?;
+    }
+    Some(())
 }
 
 fn is_equal(left: Value, right: Value) -> bool {
@@ -453,134 +437,44 @@ mod test {
     #[test]
     fn test_variables() {
         let mut output = Vec::<u8>::new();
-
-        let statements = "var a = 1; var a = a + a + 3; print a;";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("5\n", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
-
-        let statements = "var a = 5; var b = a = a * 3; print a; print b;";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("15\n15\n", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
-
-        let statements = "var a = 15; var b = 15; b = a = a * 3; print a; print b;";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("45\n45\n", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
-
-        let statements = "var a = 45; b = a = a * 3; print a; print b;";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::RuntimeError, res);
-        assert_eq!("", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
+        let output = &mut output;
+        assert_eval_with_output("var a = 1; var a = a + a + 3; print a;", EvalResult::Ok, "5\n", output);
+        assert_eval_with_output("var a = 5; var b = a = a * 3; print a; print b;", EvalResult::Ok, "15\n15\n", output);
+        assert_eval_with_output("var a = 15; var b = 15; b = a = a * 3; print a; print b;", EvalResult::Ok, "45\n45\n", output);
+        assert_eval_with_output("var a = 45; b = a = a * 3; print a; print b;", EvalResult::RuntimeError, "", output);
     }
-    
+
     #[test]
     fn test_strings() {
         let mut output = Vec::<u8>::new();
-        let statements = "var a = \"test\"; var b = a; b = b + b; print a; print b;";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("test\ntesttest\n", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
+        let output = &mut output;
+        assert_eval_with_output("var a = \"test\"; var b = a; b = b + b; print a; print b;", EvalResult::Ok, "test\ntesttest\n", output);
     }
 
     #[test]
     fn test_scopes() {
         let mut output = Vec::<u8>::new();
-
-        let statements = "var a = 1; {var a = a + 2; print a;} print a;";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("3\n1\n", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
-
-        let statements = "var a = 1; var b = 2; {var a = 3; a = 4; b = 5;} print a; print b;";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("1\n5\n", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
-
-        let statements = "{var a = 1;}}";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::ParseError, res);
-        assert_eq!("", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
+        let output = &mut output;
+        assert_eval_with_output("var a = 1; {var a = a + 2; print a;} print a;", EvalResult::Ok, "3\n1\n", output);
+        assert_eval_with_output("var a = 1; var b = 2; {var a = 3; a = 4; b = 5;} print a; print b;", EvalResult::Ok, "1\n5\n", output);
+        assert_eval_with_output("{var a = 1;}}", EvalResult::ParseError, "", output);
     }
 
     #[test]
     fn test_if() {
         let mut output = Vec::<u8>::new();
-
-        let statements = "if (true) print 1; else print 2; print 3;";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("1\n3\n", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
-
-        let statements = "if (true) print 1; else {print 2; print 3;}";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("1\n", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
-
-        let statements = "if (false) print 1; else print 2;";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("2\n", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
-
-        let statements = "if (false) print 1; else {print 2; print 3;}";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("2\n3\n", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
-
-        let statements = "if (false) print 1; print 2;";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("2\n", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
-
-        let statements = "if (false) {print 1; print 2;}";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
-
-        let statements = "var a = false; if (a = true) {print 1;}";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("1\n", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
-
-        let statements = "if (true);";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
-
-        let statements = "if true print 1;";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::ParseError, res);
-        assert_eq!("", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
-
-        let statements = "if (true) if (false) print 1; else print 2;";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("2\n", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
-
-        let statements = "if (true) {if (false) print 1;} else print 2;";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
+        let output = &mut output;
+        assert_eval_with_output("if (true) print 1; else print 2; print 3;", EvalResult::Ok, "1\n3\n", output);
+        assert_eval_with_output("if (true) print 1; else {print 2; print 3;}", EvalResult::Ok, "1\n", output);
+        assert_eval_with_output("if (false) print 1; else print 2;", EvalResult::Ok, "2\n", output);
+        assert_eval_with_output("if (false) print 1; else {print 2; print 3;}", EvalResult::Ok, "2\n3\n", output);
+        assert_eval_with_output("if (false) print 1; print 2;", EvalResult::Ok, "2\n", output);
+        assert_eval_with_output("if (false) {print 1; print 2;}", EvalResult::Ok, "", output);
+        assert_eval_with_output("var a = false; if (a = true) {print 1;}", EvalResult::Ok, "1\n", output);
+        assert_eval_with_output("if (true);", EvalResult::Ok, "", output);
+        assert_eval_with_output("if true print 1;", EvalResult::ParseError, "", output);
+        assert_eval_with_output("if (true) if (false) print 1; else print 2;", EvalResult::Ok, "2\n", output);
+        assert_eval_with_output("if (true) {if (false) print 1;} else print 2;", EvalResult::Ok, "", output);
     }
 
     #[test]
@@ -600,135 +494,80 @@ mod test {
     #[test]
     fn test_bool_ops_short_circuit() {
         let mut output = Vec::<u8>::new();
-
-        let statements = "var a = 1; (a = 2) or (a = 3); print a;";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("2\n", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
-
-        let statements = "var a = 1; (a = nil) or (a = 3); print a;";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("3\n", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
-
-        let statements = "var a = 1; (a = nil) and (a = 3); print a;";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("nil\n", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
-
-        let statements = "var a = 1; (a = 2) and (a = 3); print a;";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("3\n", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
+        let output = &mut output;
+        assert_eval_with_output("var a = 1; (a = 2) or (a = 3); print a;", EvalResult::Ok, "2\n", output);
+        assert_eval_with_output("var a = 1; (a = nil) or (a = 3); print a;", EvalResult::Ok, "3\n", output);
+        assert_eval_with_output("var a = 1; (a = nil) and (a = 3); print a;", EvalResult::Ok, "nil\n", output);
+        assert_eval_with_output("var a = 1; (a = 2) and (a = 3); print a;", EvalResult::Ok, "3\n", output);
     }
 
     #[test]
     fn test_while() {
         let mut output = Vec::<u8>::new();
-
-        let statements = "var a = 3; while (a > 0) print a = a - 1; print 100;";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("2\n1\n0\n100\n", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
-
-        let statements = "var a = 3; while (a > 0) {print a = a - 1; print 100;}";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("2\n100\n1\n100\n0\n100\n", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
-
-        let statements = "var a = 3; while (a < 0) print a = a - 1; print 100;";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("100\n", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
-
-        let statements = "var a = 3; while (a < 0) {print a = a - 1; print 100;}";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
-
-        let statements = "var a = 3; while ((a = a - 1) > 0); print a;";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("0\n", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
-
-        let statements = "var a = 3; while a > 0 print a = a - 1; print 100;";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::ParseError, res);
-        assert_eq!("", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
+        let output = &mut output;
+        assert_eval_with_output("var a = 3; while (a > 0) print a = a - 1; print 100;", EvalResult::Ok, "2\n1\n0\n100\n", output);
+        assert_eval_with_output("var a = 3; while (a > 0) {print a = a - 1; print 100;}", EvalResult::Ok, "2\n100\n1\n100\n0\n100\n", output);
+        assert_eval_with_output("var a = 3; while (a < 0) print a = a - 1; print 100;", EvalResult::Ok, "100\n", output);
+        assert_eval_with_output("var a = 3; while (a < 0) {print a = a - 1; print 100;}", EvalResult::Ok, "", output);
+        assert_eval_with_output("var a = 3; while ((a = a - 1) > 0); print a;", EvalResult::Ok, "0\n", output);
+        assert_eval_with_output("var a = 3; while a > 0 print a = a - 1; print 100;", EvalResult::ParseError, "", output);
     }
 
     #[test]
     fn test_for() {
         let mut output = Vec::<u8>::new();
-
-        /*let statements = "for (;;);";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);*/
-
-        let statements = "for (var a = 0; a > 0; a = a + 1) {}";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
-
-        let statements = "for (var a = 1; a < 4; a = a + 1) {print a; print 9;}";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("1\n9\n2\n9\n3\n9\n", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
-
-        let statements = "for (var a = 1; a < 4; a = a + 1) print a; print 9;";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::Ok, res);
-        assert_eq!("1\n2\n3\n9\n", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
-
-        let statements = "for (var a = 1; a < 4; a = a + 1) print a; print a;";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::RuntimeError, res);
-        assert_eq!("1\n2\n3\n", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
-
-        let statements = "for (;;;);";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::ParseError, res);
-        assert_eq!("", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
+        let output = &mut output;
+        assert_eval_with_output("for (var a = 0; a > 0; a = a + 1) {}", EvalResult::Ok, "", output);
+        assert_eval_with_output("for (var a = 1; a < 4; a = a + 1) {print a; print 9;}", EvalResult::Ok, "1\n9\n2\n9\n3\n9\n", output);
+        assert_eval_with_output("for (var a = 1; a < 4; a = a + 1) print a; print 9;", EvalResult::Ok, "1\n2\n3\n9\n", output);
+        assert_eval_with_output("for (var a = 1; a < 4; a = a + 1) print a; print a;", EvalResult::RuntimeError, "1\n2\n3\n", output);
+        assert_eval_with_output("for (;;;);", EvalResult::ParseError, "", output);
     }
 
     #[test]
-    fn test_functions() {
+    fn test_native_functions() {
         let mut output = Vec::<u8>::new();
+        let output = &mut output;
+        
         let expected_min = time_now().unwrap() - 100.0;
-
         let statements = "print clock();";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
+        let res = evaluate_statements_list_from_string(statements, output);
         assert_eq!(EvalResult::Ok, res);
         assert!(std::str::from_utf8(&output).unwrap().trim().parse::<f64>().unwrap() > expected_min);
         output.truncate(0);
 
-        let statements = "print clock(;";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::ParseError, res);
-        assert_eq!("", std::str::from_utf8(&output).unwrap());
-        output.truncate(0);
+        assert_eval_with_output("print clock;", EvalResult::Ok, "<native fn clock>\n", output);
+        assert_eval_with_output("print clock(;", EvalResult::ParseError, "", output);
+        assert_eval_with_output("print clock(1);", EvalResult::RuntimeError, "", output);
 
-        let statements = "print clock(1);";
-        let res = evaluate_statements_list_from_string(statements, &mut output);
-        assert_eq!(EvalResult::RuntimeError, res);
-        assert_eq!("", std::str::from_utf8(&output).unwrap());
+        assert_eval_with_output("var clock = 1;", EvalResult::RuntimeError, "", output);
+        assert_eval_with_output("var clock = clock;", EvalResult::RuntimeError, "", output);
+        assert_eval_with_output("var test = clock; print test;", EvalResult::Ok, "<native fn clock>\n", output);
+        assert_eval_with_output("{var clock = 1; print clock;} print clock;", EvalResult::Ok, "1\n<native fn clock>\n", output);
+        assert_eval_with_output("{var clock = clock; print clock;} print clock;", EvalResult::Ok, "<native fn clock>\n<native fn clock>\n", output);
+    }
+
+    #[test]
+    fn test_user_functions() {
+        let mut output = Vec::<u8>::new();
+        let output = &mut output;
+        assert_eval_with_output("fun foo() {} print foo(); print foo;", EvalResult::Ok, "nil\n<fn foo>\n", output);
+        assert_eval_with_output("fun foo(a, b) {print a + b;} foo(1, 2 + 3); ", EvalResult::Ok, "6\n", output);
+        assert_eval_with_output("foo(); ", EvalResult::RuntimeError, "", output);
+        assert_eval_with_output("fun foo(); ", EvalResult::ParseError, "", output);
+        
+        assert_eval_with_output("fun foo() {}; var foo = 1;", EvalResult::RuntimeError, "", output);
+        assert_eval_with_output("fun foo() {}; var foo = foo;", EvalResult::RuntimeError, "", output);
+        assert_eval_with_output("var foo = 1; fun foo() {};", EvalResult::RuntimeError, "", output);
+        assert_eval_with_output("fun foo() {}; var test = foo; print test;", EvalResult::Ok, "<fn foo>\n", output);
+        assert_eval_with_output("fun foo() {}; {var foo = 1; print foo;} print foo;", EvalResult::Ok, "1\n<fn foo>\n", output);
+        assert_eval_with_output("var foo = 1; {fun foo() {}; print foo;} print foo;", EvalResult::Ok, "<fn foo>\n1\n", output);
+    }
+    
+    fn assert_eval_with_output(statements: &str, expect_result: EvalResult, expect_output: &str, output: &mut Vec<u8>) {
+        let res = evaluate_statements_list_from_string(statements, output);
+        assert_eq!(expect_result, res);
+        assert_eq!(expect_output, std::str::from_utf8(&output).unwrap());
         output.truncate(0);
     }
 }

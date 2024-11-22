@@ -1,7 +1,8 @@
 use std::fmt::{Display, Formatter, Write};
+use std::rc::Rc;
 use crate::parser_expressions::{parse_expression, Expression, ExpressionBody, expect_token_kind, check_token_kind};
 use crate::tokenizer::{tokenize_string_no_eof, Location, Token, TokenKind};
-use crate::value::Value;
+use crate::value::{FunctionRef, FunctionValue, Value};
 
 #[derive(Debug)]
 pub(crate) enum StatementBody {
@@ -12,7 +13,7 @@ pub(crate) enum StatementBody {
     If{condition: Expression, body: Option<Box<Statement>>, else_body: Option<Box<Statement>>},
     While{condition: Expression, body: Option<Box<Statement>>},
     For{init: Option<Box<Statement>>, condition: Expression, increment: Option<Expression>, body: Option<Box<Statement>>},
-    FunctionDeclaration{name: String, args: Vec<String>, body: Scope},
+    FunctionDeclaration(FunctionRef),
 }
 impl Display for StatementBody {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -60,12 +61,13 @@ impl Display for StatementBody {
                     f.write_char(';')
                 }
             }
-            StatementBody::FunctionDeclaration { name, args, body } => {
-                f.write_fmt(format_args!("fun {name}("))?;
-                for arg in args {
+            StatementBody::FunctionDeclaration(func) => {
+                let func = &func.inner;
+                f.write_fmt(format_args!("fun {}(", func.name))?;
+                for arg in &func.args {
                     f.write_fmt(format_args!("{arg}, "))?;
                 }
-                f.write_fmt(format_args!(") {body}"))
+                f.write_fmt(format_args!(") {}", func.body))
             },
         }
     }
@@ -319,11 +321,13 @@ fn parse_statement(tail: &[Token]) -> Option<(ParseResult, &[Token])> {
             let (args, tail) = parse_call_args(tail, loc)?;
             let (_, tail) = expect_token_kind(tail, TokenKind::LEFT_BRACE, loc)?;
             let (scope, tail) = parse_scope(tail, false)?;
-            let body = StatementBody::FunctionDeclaration {
+            let func = FunctionValue{
                 name: name.code.clone(), // todo: check if we can remove copying here
                 args,
                 body: scope,
+                loc,
             };
+            let body = StatementBody::FunctionDeclaration(Rc::new(func).into());
             let stmt = Statement{body, loc};
             Some((ParseResult::Statement(stmt), tail))
         },
@@ -548,7 +552,8 @@ mod test {
         assert!(parse_statement_list_from_string("fun foo(123) {}").is_none());
         assert!(parse_statement_list_from_string("fun foo()").is_none());
         assert!(parse_statement_list_from_string("fun foo();").is_none());
-        assert!(parse_statement_list_from_string("fun foo() print 1.0;").is_none());
+        assert!(parse_statement_list_from_string("fun foo() print 1;").is_none());
+        assert!(parse_statement_list_from_string("fun foo() 1").is_none());
         assert!(parse_statement_list_from_string("fun foo() {").is_none());
         assert!(parse_statement_list_from_string("fun foo( {}").is_none());
     }
