@@ -1,10 +1,10 @@
 use std::fmt::{Display, Formatter, Write};
 use crate::tokenizer::{tokenize_string_no_eof, Location, Token, TokenKind};
-use crate::value::Literal;
+use crate::value::Value;
 
 #[derive(Debug)]
 pub(crate) enum ExpressionBody {
-    Literal(Literal),
+    Literal(Value),
     Unary(Box<UnaryExpression>),
     Binary(Box<BinaryExpression>),
     Grouping(Box<Expression>),
@@ -21,7 +21,7 @@ pub(crate) struct Expression {
 impl Display for ExpressionBody {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            ExpressionBody::Literal(Literal::Number(n)) if n.fract() == 0.0 => f.write_fmt(format_args!("{n}.0")),
+            ExpressionBody::Literal(Value::Number(n)) if n.fract() == 0.0 => f.write_fmt(format_args!("{n}.0")),
             ExpressionBody::Literal(lit) => f.write_fmt(format_args!("{lit}")),
             ExpressionBody::Grouping(inner) => f.write_fmt(format_args!("(group {inner})")),
             ExpressionBody::Unary(ex) => f.write_fmt(format_args!("({} {})", ex.op, ex.ex)),
@@ -216,16 +216,16 @@ fn parse_operand<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Ex
     };
 
     let literal = match token.kind {
-        TokenKind::NIL => Some(Literal::Nil),
-        TokenKind::FALSE => Some(Literal::Bool(false)),
-        TokenKind::TRUE => Some(Literal::Bool(true)),
-        TokenKind::NUMBER => Some(Literal::Number(
+        TokenKind::NIL => Some(Value::Nil),
+        TokenKind::FALSE => Some(Value::Bool(false)),
+        TokenKind::TRUE => Some(Value::Bool(true)),
+        TokenKind::NUMBER => Some(Value::Number(
             token.literal.as_ref()
                 .expect("got a literal token without literal value")
                 .parse()
                 .expect("got an invalid numeric literal")
         )),
-        TokenKind::STRING => Some(Literal::String(token.literal.clone().expect("got a literal token without literal value"))), // todo: check if we can remove copying here
+        TokenKind::STRING => Some(Value::String(token.literal.clone().expect("got a literal token without literal value"))), // todo: check if we can remove copying here
         _ => None,
     };
     if let Some(literal) = literal {

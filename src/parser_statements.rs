@@ -1,7 +1,7 @@
 use std::fmt::{Display, Formatter, Write};
 use crate::parser_expressions::{parse_expression, Expression, ExpressionBody, expect_token_kind, check_token_kind};
 use crate::tokenizer::{tokenize_string_no_eof, Location, Token, TokenKind};
-use crate::value::Literal;
+use crate::value::Value;
 
 #[derive(Debug)]
 pub(crate) enum StatementBody {
@@ -201,7 +201,7 @@ fn parse_statement(tail: &[Token]) -> Option<(ParseResult, &[Token])> {
                 }
                 TokenKind::SEMICOLON => {
                     let expr = Expression{
-                        body: ExpressionBody::Literal(Literal::Nil),
+                        body: ExpressionBody::Literal(Value::Nil),
                         loc: next.loc,
                     };
                     (expr, tail)
@@ -281,7 +281,7 @@ fn parse_statement(tail: &[Token]) -> Option<(ParseResult, &[Token])> {
                 let (_, tail) = expect_token_kind(tail, TokenKind::SEMICOLON, loc)?;
                 (condition, tail)
             } else {
-                (Expression{ body: ExpressionBody::Literal(Literal::Bool(true)), loc }, tail)
+                (Expression{ body: ExpressionBody::Literal(Value::Bool(true)), loc }, tail)
             };
 
             let (close, tail) = check_token_kind(tail, TokenKind::RIGHT_PAREN);

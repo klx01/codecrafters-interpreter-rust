@@ -4,7 +4,7 @@ use std::time::SystemTime;
 use crate::parser_expressions::{parse_expression_from_string, BinaryOperator, Expression, ExpressionBody, UnaryOperator};
 use crate::parser_statements::{parse_statement_list_from_string, Scope, Statement, StatementBody};
 use crate::tokenizer::Location;
-use crate::value::Literal;
+use crate::value::Value;
 
 #[derive(PartialEq, Debug)]
 pub(crate) enum EvalResult {
@@ -22,7 +22,7 @@ impl EvalResult {
     }
 }
 
-type MemoryScope = HashMap<String, Literal>;
+type MemoryScope = HashMap<String, Value>;
 #[derive(Default)]
 struct Memory {
     scopes: Vec<MemoryScope>,
@@ -37,7 +37,7 @@ impl Memory {
     fn leave_scope(&mut self) {
         self.scopes.pop();
     }
-    fn declare(&mut self, name: &str, value: Literal) {
+    fn declare(&mut self, name: &str, value: Value) {
         let scope = self.scopes.last_mut().expect("No scopes left in memory!");
         if let Some(val_ref) = scope.get_mut(name) {
             *val_ref = value;
@@ -45,7 +45,7 @@ impl Memory {
             scope.insert(name.to_string(), value);
         }
     }
-    fn assign(&mut self, name: &str, value: Literal) -> bool {
+    fn assign(&mut self, name: &str, value: Value) -> bool {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(val) = scope.get_mut(name) {
                 *val = value;
@@ -54,7 +54,7 @@ impl Memory {
         }
         false
     }
-    fn get(&self, name: &str) -> Option<&Literal> {
+    fn get(&self, name: &str) -> Option<&Value> {
         for scope in self.scopes.iter().rev() {
             if let Some(value) = scope.get(name) {
                 return Some(value);
@@ -64,7 +64,7 @@ impl Memory {
     }
 }
 
-pub(crate) fn evaluate_expr_from_string(str: &str) -> Option<Literal> {
+pub(crate) fn evaluate_expr_from_string(str: &str) -> Option<Value> {
     let expr = parse_expression_from_string(str)?;
     let mut memory = Memory::new();
     let result = eval_expr(&expr, &mut memory)?;
@@ -159,7 +159,7 @@ fn eval_statement(statement: &Statement, memory: &mut Memory, output: &mut impl 
     Some(())
 }
 
-fn eval_expr(expr: &Expression, memory: &mut Memory) -> Option<Literal> {
+fn eval_expr(expr: &Expression, memory: &mut Memory) -> Option<Value> {
     let loc = expr.loc;
     match &expr.body {
         ExpressionBody::Literal(x) => Some(x.clone()), // todo: is it possible to not clone this when we don't actually need to?
@@ -167,13 +167,13 @@ fn eval_expr(expr: &Expression, memory: &mut Memory) -> Option<Literal> {
             let value = eval_expr(&expr.ex, memory)?;
             match expr.op {
                 UnaryOperator::Minus => match value {
-                    Literal::Number(n) => Some(Literal::Number(-n)),
+                    Value::Number(n) => Some(Value::Number(-n)),
                     _ => {
                         eprintln!("operator {} can not be applied to value {value:?} at {loc}", expr.op);
                         None
                     }
                 }
-                UnaryOperator::Not => Some(Literal::Bool(!cast_to_bool(&value))),
+                UnaryOperator::Not => Some(Value::Bool(!cast_to_bool(&value))),
             }
         }
         ExpressionBody::Binary(expr) => {
@@ -197,35 +197,35 @@ fn eval_expr(expr: &Expression, memory: &mut Memory) -> Option<Literal> {
             };
             let right = eval_expr(&expr.right, memory)?;
             match expr.op {
-                BinaryOperator::Equal => Some(Literal::Bool(is_equal(left, right))),
-                BinaryOperator::NotEqual => Some(Literal::Bool(!is_equal(left, right))),
+                BinaryOperator::Equal => Some(Value::Bool(is_equal(left, right))),
+                BinaryOperator::NotEqual => Some(Value::Bool(!is_equal(left, right))),
                 BinaryOperator::Less => process_number_values(
                     &left, &right,
-                    |left, right| Literal::Bool(left < right),
+                    |left, right| Value::Bool(left < right),
                     loc, expr.op
                 ),
                 BinaryOperator::LessOrEqual => process_number_values(
                     &left, &right,
-                    |left, right| Literal::Bool(left <= right),
+                    |left, right| Value::Bool(left <= right),
                     loc, expr.op
                 ),
                 BinaryOperator::Greater => process_number_values(
                     &left, &right,
-                    |left, right| Literal::Bool(left > right),
+                    |left, right| Value::Bool(left > right),
                     loc, expr.op
                 ),
                 BinaryOperator::GreaterOrEqual => process_number_values(
                     &left, &right,
-                    |left, right| Literal::Bool(left >= right),
+                    |left, right| Value::Bool(left >= right),
                     loc, expr.op
                 ),
                 BinaryOperator::Plus => match (left, right) {
-                    (Literal::Number(left), Literal::Number(right)) => {
-                        Some(Literal::Number(left + right))
+                    (Value::Number(left), Value::Number(right)) => {
+                        Some(Value::Number(left + right))
                     }
-                    (Literal::String(mut left), Literal::String(right)) => {
+                    (Value::String(mut left), Value::String(right)) => {
                         left.push_str(&right);
-                        Some(Literal::String(left))
+                        Some(Value::String(left))
                     }
                     (left, right) => {
                         eprintln!("expected both operands to be numbers or strings for {} at {loc}, got {left:?} and {right:?}", expr.op);
@@ -234,17 +234,17 @@ fn eval_expr(expr: &Expression, memory: &mut Memory) -> Option<Literal> {
                 }
                 BinaryOperator::Minus => process_number_values(
                     &left, &right,
-                    |left, right| Literal::Number(left - right),
+                    |left, right| Value::Number(left - right),
                     loc, expr.op
                 ),
                 BinaryOperator::Multiply => process_number_values(
                     &left, &right,
-                    |left, right| Literal::Number(left * right),
+                    |left, right| Value::Number(left * right),
                     loc, expr.op
                 ),
                 BinaryOperator::Divide => process_number_values(
                     &left, &right,
-                    |left, right| Literal::Number(left / right),
+                    |left, right| Value::Number(left / right),
                     loc, expr.op
                 ),
                 BinaryOperator::Or => unreachable!(),
@@ -274,7 +274,7 @@ fn eval_expr(expr: &Expression, memory: &mut Memory) -> Option<Literal> {
             match name.as_str() {
                 "clock" => {
                     check_args_count(args, 0, name, loc)?;
-                    Some(Literal::Number(time_now()?))
+                    Some(Value::Number(time_now()?))
                 },
                 _ => {
                     eprintln!("Unknown function name {name} at {loc}");
@@ -285,27 +285,27 @@ fn eval_expr(expr: &Expression, memory: &mut Memory) -> Option<Literal> {
     }
 }
 
-fn is_equal(left: Literal, right: Literal) -> bool {
+fn is_equal(left: Value, right: Value) -> bool {
     match (left, right) {
-        (Literal::Nil, Literal::Nil) => true,
-        (Literal::Bool(left), Literal::Bool(right)) => left == right,
-        (Literal::Number(left), Literal::Number(right)) => left == right,
-        (Literal::String(left), Literal::String(right)) => left == right,
+        (Value::Nil, Value::Nil) => true,
+        (Value::Bool(left), Value::Bool(right)) => left == right,
+        (Value::Number(left), Value::Number(right)) => left == right,
+        (Value::String(left), Value::String(right)) => left == right,
         (_, _) => false,
     }
 }
 
-fn cast_to_bool(value: &Literal) -> bool {
+fn cast_to_bool(value: &Value) -> bool {
     match value {
-        Literal::Nil => false,
-        Literal::Bool(val) => *val,
+        Value::Nil => false,
+        Value::Bool(val) => *val,
         _ => true,
     }
 }
 
-fn process_number_values(left: &Literal, right: &Literal, res: impl Fn(f64, f64) -> Literal, loc: Location, op: BinaryOperator) -> Option<Literal> {
+fn process_number_values(left: &Value, right: &Value, res: impl Fn(f64, f64) -> Value, loc: Location, op: BinaryOperator) -> Option<Value> {
     match (left, right) {
-        (Literal::Number(left), Literal::Number(right)) => {
+        (Value::Number(left), Value::Number(right)) => {
             Some(res(*left, *right))
         }
         (_, _) => {
@@ -346,27 +346,27 @@ mod test {
     #[test]
     fn test_literals() {
         let res = evaluate_expr_from_string("nil");
-        assert_eq!(Some(Literal::Nil), res);
+        assert_eq!(Some(Value::Nil), res);
         assert_eq!("nil", res.unwrap().to_string());
         let res = evaluate_expr_from_string("true");
-        assert_eq!(Some(Literal::Bool(true)), res);
+        assert_eq!(Some(Value::Bool(true)), res);
         assert_eq!("true", res.unwrap().to_string());
         let res = evaluate_expr_from_string("false");
-        assert_eq!(Some(Literal::Bool(false)), res);
+        assert_eq!(Some(Value::Bool(false)), res);
         assert_eq!("false", res.unwrap().to_string());
 
         let res = evaluate_expr_from_string("\"Hello, World!\"");
-        assert_eq!(Some(Literal::String("Hello, World!".to_string())), res);
+        assert_eq!(Some(Value::String("Hello, World!".to_string())), res);
         assert_eq!("Hello, World!", res.unwrap().to_string());
         let res = evaluate_expr_from_string("10.40");
-        assert_eq!(Some(Literal::Number(10.4)), res);
+        assert_eq!(Some(Value::Number(10.4)), res);
         assert_eq!("10.4", res.unwrap().to_string());
         let res = evaluate_expr_from_string("10");
-        assert_eq!(Some(Literal::Number(10.0)), res);
+        assert_eq!(Some(Value::Number(10.0)), res);
         assert_eq!("10", res.unwrap().to_string());
 
         let res = evaluate_expr_from_string("((false))");
-        assert_eq!(Some(Literal::Bool(false)), res);
+        assert_eq!(Some(Value::Bool(false)), res);
         assert_eq!("false", res.unwrap().to_string());
     }
 
