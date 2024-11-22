@@ -2,6 +2,7 @@ mod tokenizer;
 mod parser_expressions;
 mod eval;
 mod parser_statements;
+mod value;
 
 use std::fs;
 use std::process::exit;

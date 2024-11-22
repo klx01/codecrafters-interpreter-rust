@@ -1,16 +1,18 @@
 use std::fmt::{Display, Formatter, Write};
-use crate::parser_expressions::{parse_expression, Expression, ExpressionBody, Literal, expect_token_kind, check_token_kind};
+use crate::parser_expressions::{parse_expression, Expression, ExpressionBody, expect_token_kind, check_token_kind};
 use crate::tokenizer::{tokenize_string_no_eof, Location, Token, TokenKind};
+use crate::value::Literal;
 
 #[derive(Debug)]
 pub(crate) enum StatementBody {
     Print(Expression),
     Expression(Expression),
     VariableDeclaration{name: String, value: Expression},
-    Scope(Box<Scope>),
+    Scope(Scope),
     If{condition: Expression, body: Option<Box<Statement>>, else_body: Option<Box<Statement>>},
     While{condition: Expression, body: Option<Box<Statement>>},
     For{init: Option<Box<Statement>>, condition: Expression, increment: Option<Expression>, body: Option<Box<Statement>>},
+    FunctionDeclaration{name: String, args: Vec<String>, body: Scope},
 }
 impl Display for StatementBody {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -58,6 +60,13 @@ impl Display for StatementBody {
                     f.write_char(';')
                 }
             }
+            StatementBody::FunctionDeclaration { name, args, body } => {
+                f.write_fmt(format_args!("fun {name}("))?;
+                for arg in args {
+                    f.write_fmt(format_args!("{arg}, "))?;
+                }
+                f.write_fmt(format_args!(") {body}"))
+            },
         }
     }
 }
@@ -215,7 +224,7 @@ fn parse_statement(tail: &[Token]) -> Option<(ParseResult, &[Token])> {
             if scope.statements.is_empty() {
                 return Some((ParseResult::Nop, tail));
             }
-            let body = StatementBody::Scope(Box::new(scope));
+            let body = StatementBody::Scope(scope);
             let stmt = Statement { body, loc };
             Some((ParseResult::Statement(stmt), tail))
         },
@@ -300,9 +309,23 @@ fn parse_statement(tail: &[Token]) -> Option<(ParseResult, &[Token])> {
                 start: loc,
                 end: Location { row: 0, col: 0 }, // todo: set the actual end location
             };
-            let wrapper_scope = Statement{body: StatementBody::Scope(Box::new(wrapper_scope)), loc};
+            let wrapper_scope = Statement{body: StatementBody::Scope(wrapper_scope), loc};
 
             Some((ParseResult::Statement(wrapper_scope), tail))
+        },
+        TokenKind::FUN => {
+            let (name, tail) = expect_token_kind(tail, TokenKind::IDENTIFIER, loc)?;
+            let (_, tail) = expect_token_kind(tail, TokenKind::LEFT_PAREN, loc)?;
+            let (args, tail) = parse_call_args(tail, loc)?;
+            let (_, tail) = expect_token_kind(tail, TokenKind::LEFT_BRACE, loc)?;
+            let (scope, tail) = parse_scope(tail, false)?;
+            let body = StatementBody::FunctionDeclaration {
+                name: name.code.clone(), // todo: check if we can remove copying here
+                args,
+                body: scope,
+            };
+            let stmt = Statement{body, loc};
+            Some((ParseResult::Statement(stmt), tail))
         },
         _ => {
             eprintln!("Unexpected token {head} at {loc}, expected a start of a statement");
@@ -343,6 +366,33 @@ fn parse_actual_statement(tail: &[Token]) -> Option<(Option<Statement>, &[Token]
 fn check_statement_terminated(tail: &[Token], start_loc: Location) -> Option<&[Token]> {
     let (_, tail) = expect_token_kind(tail, TokenKind::SEMICOLON, start_loc)?;
     Some(tail)
+}
+
+fn parse_call_args(mut tail: &[Token], loc: Location) -> Option<(Vec<String>, &[Token])> {
+    let mut args = vec![];
+    loop {
+        let (paren, tail2) = check_token_kind(tail, TokenKind::RIGHT_PAREN);
+        tail = tail2;
+        if paren.is_some() {
+            return Some((args, tail));
+        }
+        let (arg, tail2) = expect_token_kind(tail, TokenKind::IDENTIFIER, loc)?; // todo: fix location
+        tail = tail2;
+        args.push(arg.code.clone()); // todo: check if it's possible not to clone this
+        let Some((next, tail2)) = tail.split_first() else {
+            eprintln!("Unexpected end of token stream, expected ) or , in arguments list for a function declaration at {}", loc); // todo: fix location
+            return None;
+        };
+        tail = tail2;
+        match next.kind {
+            TokenKind::COMMA => {},
+            TokenKind::RIGHT_PAREN => return Some((args, tail)),
+            _ => {
+                eprintln!("Expected ) or , but found {next} at {}", next.loc);
+                return None;
+            },
+        }
+    }
 }
 
 #[cfg(test)]
@@ -477,5 +527,29 @@ mod test {
         assert!(parse_statement_list_from_string("for (;;) var a;").is_none());
         assert!(parse_statement_list_from_string("for (;);").is_none());
         assert!(parse_statement_list_from_string("for (;;;);").is_none());
+    }
+
+    #[test]
+    fn test_function_declaration() {
+        let statements = "fun foo() {}";
+        let expected = "{ fun foo() { } }";
+        assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
+        
+        let statements = "fun foo(a, b, c) {print 1.0;}";
+        let expected = "{ fun foo(a, b, c, ) { print 1.0; } }";
+        assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
+        
+        let statements = "fun foo(a, b, c,) {print 1.0;}";
+        let expected = "{ fun foo(a, b, c, ) { print 1.0; } }";
+        assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
+
+        assert!(parse_statement_list_from_string("fun () {}").is_none());
+        assert!(parse_statement_list_from_string("fun 123() {}").is_none());
+        assert!(parse_statement_list_from_string("fun foo(123) {}").is_none());
+        assert!(parse_statement_list_from_string("fun foo()").is_none());
+        assert!(parse_statement_list_from_string("fun foo();").is_none());
+        assert!(parse_statement_list_from_string("fun foo() print 1.0;").is_none());
+        assert!(parse_statement_list_from_string("fun foo() {").is_none());
+        assert!(parse_statement_list_from_string("fun foo( {}").is_none());
     }
 }

@@ -1,5 +1,6 @@
 use std::fmt::{Display, Formatter, Write};
 use crate::tokenizer::{tokenize_string_no_eof, Location, Token, TokenKind};
+use crate::value::Literal;
 
 #[derive(Debug)]
 pub(crate) enum ExpressionBody {
@@ -40,24 +41,6 @@ impl Display for ExpressionBody {
 impl Display for Expression {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!("{}", self.body))
-    }
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub(crate) enum Literal {
-    Number(f64),
-    String(String),
-    Bool(bool),
-    Nil,
-}
-impl Display for Literal {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Literal::Number(n) => f.write_fmt(format_args!("{n}")),
-            Literal::String(s) => f.write_str(s),
-            Literal::Bool(b) => f.write_fmt(format_args!("{b}")),
-            Literal::Nil => f.write_str("nil"),
-        }
     }
 }
 

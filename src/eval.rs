@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 use std::io::Write;
 use std::time::SystemTime;
-use crate::parser_expressions::{parse_expression_from_string, BinaryOperator, Expression, ExpressionBody, Literal, UnaryOperator};
+use crate::parser_expressions::{parse_expression_from_string, BinaryOperator, Expression, ExpressionBody, UnaryOperator};
 use crate::parser_statements::{parse_statement_list_from_string, Scope, Statement, StatementBody};
 use crate::tokenizer::Location;
+use crate::value::Literal;
 
 #[derive(PartialEq, Debug)]
 pub(crate) enum EvalResult {
@@ -151,6 +152,9 @@ fn eval_statement(statement: &Statement, memory: &mut Memory, output: &mut impl 
                 }
             }
         }
+        StatementBody::FunctionDeclaration { name, args, body } => {
+            todo!()
+        }
     }
     Some(())
 }
@@ -195,22 +199,22 @@ fn eval_expr(expr: &Expression, memory: &mut Memory) -> Option<Literal> {
             match expr.op {
                 BinaryOperator::Equal => Some(Literal::Bool(is_equal(left, right))),
                 BinaryOperator::NotEqual => Some(Literal::Bool(!is_equal(left, right))),
-                BinaryOperator::Less => process_number_literals(
+                BinaryOperator::Less => process_number_values(
                     &left, &right,
                     |left, right| Literal::Bool(left < right),
                     loc, expr.op
                 ),
-                BinaryOperator::LessOrEqual => process_number_literals(
+                BinaryOperator::LessOrEqual => process_number_values(
                     &left, &right,
                     |left, right| Literal::Bool(left <= right),
                     loc, expr.op
                 ),
-                BinaryOperator::Greater => process_number_literals(
+                BinaryOperator::Greater => process_number_values(
                     &left, &right,
                     |left, right| Literal::Bool(left > right),
                     loc, expr.op
                 ),
-                BinaryOperator::GreaterOrEqual => process_number_literals(
+                BinaryOperator::GreaterOrEqual => process_number_values(
                     &left, &right,
                     |left, right| Literal::Bool(left >= right),
                     loc, expr.op
@@ -228,17 +232,17 @@ fn eval_expr(expr: &Expression, memory: &mut Memory) -> Option<Literal> {
                         None
                     }
                 }
-                BinaryOperator::Minus => process_number_literals(
+                BinaryOperator::Minus => process_number_values(
                     &left, &right,
                     |left, right| Literal::Number(left - right),
                     loc, expr.op
                 ),
-                BinaryOperator::Multiply => process_number_literals(
+                BinaryOperator::Multiply => process_number_values(
                     &left, &right,
                     |left, right| Literal::Number(left * right),
                     loc, expr.op
                 ),
-                BinaryOperator::Divide => process_number_literals(
+                BinaryOperator::Divide => process_number_values(
                     &left, &right,
                     |left, right| Literal::Number(left / right),
                     loc, expr.op
@@ -299,7 +303,7 @@ fn cast_to_bool(value: &Literal) -> bool {
     }
 }
 
-fn process_number_literals(left: &Literal, right: &Literal, res: impl Fn(f64, f64) -> Literal, loc: Location, op: BinaryOperator) -> Option<Literal> {
+fn process_number_values(left: &Literal, right: &Literal, res: impl Fn(f64, f64) -> Literal, loc: Location, op: BinaryOperator) -> Option<Literal> {
     match (left, right) {
         (Literal::Number(left), Literal::Number(right)) => {
             Some(res(*left, *right))
