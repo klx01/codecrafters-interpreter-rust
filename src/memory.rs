@@ -1,11 +1,14 @@
 use std::collections::HashMap;
+use std::mem;
 use crate::tokenizer::Location;
 use crate::value::{Declaration, FunctionRef, Value};
 
 type MemoryScope = HashMap<String, ScopeValue>;
 #[derive(Default)]
 pub(crate) struct Memory {
+    globals: MemoryScope,
     scopes: Vec<MemoryScope>,
+    call_scopes: Vec<Vec<MemoryScope>>,
 }
 pub(crate) enum ScopeValue {
     Value(Value),
@@ -19,10 +22,19 @@ impl Memory {
         self.scopes.push(Default::default());
     }
     pub(crate) fn leave_scope(&mut self) {
-        self.scopes.pop();
+        self.scopes.pop().expect("unbalanced enter/leave scope");
+    }
+    pub(crate) fn enter_call(&mut self) {
+        let scopes = mem::replace(&mut self.scopes, vec![]);
+        self.call_scopes.push(scopes);
+        self.enter_scope();
+    }
+    pub(crate) fn leave_call(&mut self) {
+        let scopes = self.call_scopes.pop().expect("unbalanced enter/leave call");
+        self.scopes = scopes;
     }
     pub(crate) fn declare_user_function(&mut self, value: FunctionRef, loc: Location) -> Option<()> {
-        let scope = self.scopes.last_mut().expect("No scopes left in memory!");
+        let scope = self.get_last_scope();
         let name = &value.inner.name;
         if scope.contains_key(name) {
             eprintln!("Can not declare function with name {name} at {loc}, name is already used in this scope");
@@ -31,17 +43,20 @@ impl Memory {
         scope.insert(name.to_string(), ScopeValue::Declaration(Declaration::UserFunction(value)));
         Some(())
     }
-    pub(crate) fn declare_native_function(&mut self, name: &'static str) -> Option<()> {
-        let scope = self.scopes.last_mut().expect("No scopes left in memory!");
+    fn get_last_scope(&mut self) -> &mut MemoryScope {
+        self.scopes.last_mut().unwrap_or(&mut self.globals)
+    }
+    pub(crate) fn declare_native_function(&mut self, name: &'static str) -> bool {
+        let scope = &mut self.globals;
         if scope.contains_key(name) {
-            eprintln!("Can not declare native function with name {name}, name is already used in this scope");
-            return None;
+            eprintln!("Can not declare native function with name {name}, name is already used in the global scope");
+            return false;
         }
         scope.insert(name.to_string(), ScopeValue::Declaration(Declaration::NativeFunction(name)));
-        Some(())
+        true
     }
     pub(crate) fn declare_variable(&mut self, name: &str, value: Value, loc: Location) -> Option<()> {
-        let scope = self.scopes.last_mut().expect("No scopes left in memory!");
+        let scope = self.get_last_scope();
         if let Some(val_ref) = scope.get_mut(name) {
             Self::do_assign(val_ref, value, name, loc)?;
         } else {
@@ -55,12 +70,15 @@ impl Memory {
                 return Self::do_assign(val_ref, value, name, loc);
             }
         }
+        if let Some(val_ref) = self.globals.get_mut(name) {
+            return Self::do_assign(val_ref, value, name, loc);
+        }
         eprintln!("Can not assign to an undefined variable {name} at {loc}");
         None
     }
     fn do_assign(val_ref: &mut ScopeValue, value: Value, name: &str, loc: Location) -> Option<()> {
         match val_ref {
-            ScopeValue::Value(val_ref) => { 
+            ScopeValue::Value(val_ref) => {
                 *val_ref = value;
                 Some(())
             },
@@ -78,6 +96,12 @@ impl Memory {
                     ScopeValue::Declaration(x) => Some(x.clone().into()),
                 };
             }
+        }
+        if let Some(value) = self.globals.get(name) {
+            return match value {
+                ScopeValue::Value(x) => Some(x.clone()),
+                ScopeValue::Declaration(x) => Some(x.clone().into()),
+            };
         }
         eprintln!("Can not read an undefined variable {name} at {loc}");
         None
