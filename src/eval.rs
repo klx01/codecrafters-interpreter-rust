@@ -42,7 +42,7 @@ pub(crate) fn evaluate_statements_list_from_string(str: &str, output: &mut impl 
         return EvalResult::ParseError;
     };
     let mut memory = Memory::new();
-    for func in ["clock"] {
+    for func in ["clock", "_debug_native_function"] {
         let success = memory.declare_native_function(func);
         if !success {
             return EvalResult::RuntimeError;
@@ -267,6 +267,10 @@ fn eval_expr(expr: &Expression, memory: &mut Memory, output: &mut impl Write) ->
                         check_args_count(args, 0, name, loc)?;
                         Some(Value::Number(time_now()?))
                     },
+                    "_debug_native_function" => {
+                        check_args_count(args, 0, name, loc)?;
+                        Some(Value::Nil)
+                    },
                     _ => {
                         eprintln!("Native function {name} is not implemented, called at {loc}");
                         None
@@ -311,6 +315,8 @@ fn is_equal(left: Value, right: Value) -> bool {
         (Value::Bool(left), Value::Bool(right)) => left == right,
         (Value::Number(left), Value::Number(right)) => left == right,
         (Value::String(left), Value::String(right)) => left == right,
+        (Value::NativeFunction(left), Value::NativeFunction(right)) => left == right,
+        (Value::UserFunction(left), Value::UserFunction(right)) => left == right,
         (_, _) => false,
     }
 }
@@ -577,6 +583,10 @@ mod test {
         assert_eval_with_output("var clock = 1;", EvalResult::RuntimeError, "", output);
         assert_eval_with_output("var clock = clock;", EvalResult::RuntimeError, "", output);
         assert_eval_with_output("var test = clock; print test;", EvalResult::Ok, "<native fn clock>\n", output);
+        assert_eval_with_output(
+            "var test = clock; print test == clock; print clock == clock; print _debug_native_function == clock;", 
+            EvalResult::Ok, "true\ntrue\nfalse\n", output
+        );
         assert_eval_with_output("{var clock = 1; print clock;} print clock;", EvalResult::Ok, "1\n<native fn clock>\n", output);
         assert_eval_with_output("{var clock = clock; print clock;} print clock;", EvalResult::Ok, "<native fn clock>\n<native fn clock>\n", output);
     }
@@ -597,10 +607,14 @@ mod test {
             "fun foo(cond) {for (;;) while (true) if (cond) return 1; else return 2;} print foo(true); print foo(false);",
             EvalResult::Ok, "1\n2\n", output
         );
-        
+
         assert_eval_with_output(
-            "var a = 0; fun foo() {var a = 1; bar(); print a;} fun bar() {print 4;} {var a = 2; foo(); print a;} print a;", 
+            "var a = 0; fun foo() {var a = 1; bar(); print a;} fun bar() {print 4;} {var a = 2; foo(); print a;} print a;",
             EvalResult::Ok, "4\n1\n2\n0\n", output
+        );
+        assert_eval_with_output(
+            "fun foo() {} fun bar() {fun foo() {} return foo;} fun baz() {} var test = foo; print foo == test; print foo == foo; print foo == bar; print foo == bar(); print foo() == baz;",
+            EvalResult::Ok, "true\ntrue\nfalse\nfalse\nfalse\n", output
         );
 
         assert_eval_with_output("fun foo() {}; var foo = 1;", EvalResult::RuntimeError, "", output);
