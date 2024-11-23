@@ -26,7 +26,7 @@ impl EvalResult {
 #[derive(Debug)]
 enum StatementResult {
     Next,
-    Return(Value),
+    Return{val: Value, loc: Location},
     // could also be break or continue, but this language does not have those
 }
 
@@ -53,8 +53,8 @@ pub(crate) fn evaluate_statements_list_from_string(str: &str, output: &mut impl 
         None => EvalResult::RuntimeError,
         Some(x) => match x {
             StatementResult::Next => EvalResult::Ok,
-            other => {
-                eprintln!("Unexpected {other:?}"); // todo: needs location
+            StatementResult::Return {loc, ..} => {
+                eprintln!("Unexpected return at {loc}");
                 EvalResult::RuntimeError
             }
         },
@@ -116,7 +116,7 @@ fn eval_statement(statement: &Statement, memory: &mut Memory, output: &mut impl 
                     let result = eval_statement(body, memory, output)?;
                     match result {
                         StatementResult::Next => {}
-                        StatementResult::Return(x) => return Some(StatementResult::Return(x)),
+                        StatementResult::Return{..} => return Some(result),
                     }
                 }
             }
@@ -137,7 +137,7 @@ fn eval_statement(statement: &Statement, memory: &mut Memory, output: &mut impl 
                     let result = eval_statement(body, memory, output)?;
                     match result {
                         StatementResult::Next => {}
-                        StatementResult::Return(x) => return Some(StatementResult::Return(x)),
+                        StatementResult::Return{..} => return Some(result),
                     }
                 }
                 if let Some(increment) = increment {
@@ -150,7 +150,7 @@ fn eval_statement(statement: &Statement, memory: &mut Memory, output: &mut impl 
         }
         StatementBody::Return(expr) => {
             let res = eval_expr(expr, memory, output)?;
-            return Some(StatementResult::Return(res));
+            return Some(StatementResult::Return{val: res, loc: expr.start});
         }
     }
     Some(StatementResult::Next)
@@ -291,7 +291,7 @@ fn eval_expr(expr: &Expression, memory: &mut Memory, output: &mut impl Write) ->
                     memory.leave_call();
                     let return_value = match result? {
                         StatementResult::Next => Value::Nil,
-                        StatementResult::Return(x) => x,
+                        StatementResult::Return{val, ..} => val,
                     };
                     Some(return_value)
                 }
