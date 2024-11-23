@@ -11,7 +11,7 @@ pub(crate) enum ExpressionBody {
     Grouping(Box<Expression>),
     Variable(String),
     Assignment(Box<AssignmentExpression>),
-    Call{name: String, args: Vec<Expression>},
+    Call{expr: Box<Expression>, args: Vec<Expression>},
 }
 #[derive(Debug)]
 pub(crate) struct Expression {
@@ -29,8 +29,8 @@ impl Display for ExpressionBody {
             ExpressionBody::Binary(ex) => f.write_fmt(format_args!("({} {} {})", ex.op, ex.left, ex.right)),
             ExpressionBody::Variable(name) => f.write_fmt(format_args!("var({name})")),
             ExpressionBody::Assignment(ass) => f.write_fmt(format_args!("(= var({}) {})", ass.var, ass.expr)),
-            ExpressionBody::Call{ name, args } => {
-                f.write_fmt(format_args!("(call {name}"))?;
+            ExpressionBody::Call{ expr, args } => {
+                f.write_fmt(format_args!("(call {expr}"))?;
                 for arg in args {
                     f.write_fmt(format_args!(" {arg}"))?;
                 }
@@ -203,15 +203,21 @@ fn parse_operand<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Ex
 
     match token.kind {
         TokenKind::IDENTIFIER => {
-            let (paren, tail) = check_token_kind(tail, TokenKind::LEFT_PAREN);
-            let value = token.code.clone(); // todo: check if we can remove copying here
-            let (body, tail) = if paren.is_some() {
-                let (args, tail) = parse_call_args(tail, token)?;
-                (ExpressionBody::Call{ name: value, args }, tail)
-            } else {
-                (ExpressionBody::Variable(value), tail)
-            };
-            return Some((Expression{ body, loc: token.loc }, tail));
+            let name = token.code.clone(); // todo: check if we can remove copying here
+            let mut expr = Expression{ body: ExpressionBody::Variable(name), loc: token.loc };
+            let mut tail = tail;
+            loop {
+                let (paren, tail2) = check_token_kind(tail, TokenKind::LEFT_PAREN);
+                tail = tail2;
+                if paren.is_some() {
+                    let (args, tail2) = parse_call_args(tail, token)?;
+                    tail = tail2;
+                    expr = Expression{ body: ExpressionBody::Call{ expr: Box::new(expr), args }, loc: token.loc }; // todo: fix location
+                } else {
+                    break;
+                }
+            }
+            return Some((expr, tail));
         }
         _ => {},
     };
@@ -361,10 +367,11 @@ mod test {
 
     #[test]
     fn test_parse_call() {
-        assert_eq!("(call foo)", parse_expression_from_string("foo()").unwrap().to_string());
-        assert_eq!("(call foo 1.0 2.0 3.0)", parse_expression_from_string("foo(1, 2, 3)").unwrap().to_string());
-        assert_eq!("(call foo 1.0 2.0 3.0)", parse_expression_from_string("foo(1, 2, 3,)").unwrap().to_string());
-        assert_eq!("(call foo (call bar) (= var(a) (+ 1.0 2.0)))", parse_expression_from_string("foo(bar(), a = 1 + 2)").unwrap().to_string());
+        assert_eq!("(call var(foo))", parse_expression_from_string("foo()").unwrap().to_string());
+        assert_eq!("(call (call (call var(foo))))", parse_expression_from_string("foo()()()").unwrap().to_string());
+        assert_eq!("(call var(foo) 1.0 2.0 3.0)", parse_expression_from_string("foo(1, 2, 3)").unwrap().to_string());
+        assert_eq!("(call var(foo) 1.0 2.0 3.0)", parse_expression_from_string("foo(1, 2, 3,)").unwrap().to_string());
+        assert_eq!("(call var(foo) (call var(bar)) (= var(a) (+ 1.0 2.0)))", parse_expression_from_string("foo(bar(), a = 1 + 2)").unwrap().to_string());
         assert!(parse_expression_from_string("foo(").is_none());
         assert!(parse_expression_from_string("foo(1").is_none());
         assert!(parse_expression_from_string("foo(1,").is_none());

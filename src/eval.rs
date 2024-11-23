@@ -259,15 +259,15 @@ fn eval_expr(expr: &Expression, memory: &mut Memory, output: &mut impl Write) ->
             memory.assign(name, value.clone(), loc)?;
             Some(value)
         },
-        ExpressionBody::Call { name, args } => {
-            let function = memory.get(name, loc)?;
-            match function {
+        ExpressionBody::Call { expr, args } => {
+            let value = eval_expr(expr, memory, output)?;
+            match &value {
                 Value::NativeFunction(name) => match name {
-                    "clock" => {
+                    &"clock" => {
                         check_args_count(args, 0, name, loc)?;
                         Some(Value::Number(time_now()?))
                     },
-                    "_debug_native_function" => {
+                    &"_debug_native_function" => {
                         check_args_count(args, 0, name, loc)?;
                         Some(Value::Nil)
                     },
@@ -278,7 +278,7 @@ fn eval_expr(expr: &Expression, memory: &mut Memory, output: &mut impl Write) ->
                 }
                 Value::UserFunction(function) => {
                     let inner = &function.inner;
-                    check_args_count(args, inner.args.len(), name, loc)?;
+                    check_args_count(args, inner.args.len(), &inner.name, loc)?;
                     let arg_values = eval_args(args, memory, output)?;
                     memory.enter_call();
                     if function.captures.is_some() {
@@ -296,7 +296,7 @@ fn eval_expr(expr: &Expression, memory: &mut Memory, output: &mut impl Write) ->
                     Some(return_value)
                 }
                 _ => {
-                    eprintln!("{name} is not callable at {loc}");
+                    eprintln!("Value {value} is not callable at {}", expr.loc);
                     None
                 },
             }
@@ -587,7 +587,7 @@ mod test {
         assert_eval_with_output("var clock = clock;", EvalResult::RuntimeError, "", output);
         assert_eval_with_output("var test = clock; print test;", EvalResult::Ok, "<native fn clock>\n", output);
         assert_eval_with_output(
-            "var test = clock; print test == clock; print clock == clock; print _debug_native_function == clock;", 
+            "var test = clock; print test == clock; print clock == clock; print _debug_native_function == clock;",
             EvalResult::Ok, "true\ntrue\nfalse\n", output
         );
         assert_eval_with_output("{var clock = 1; print clock;} print clock;", EvalResult::Ok, "1\n<native fn clock>\n", output);
@@ -637,8 +637,9 @@ mod test {
             var a = foo(1); print a(2); print a;
             var b = a; print a == b; print b(5);
             var c = foo(1); print c(2); print a == c;
-            ", 
-            EvalResult::Ok, "3\n<fn foo>\ntrue\n6\n3\nfalse\n", output
+            print foo(3)(4);
+            ",
+            EvalResult::Ok, "3\n<fn foo>\ntrue\n6\n3\nfalse\n7\n", output
         );
         assert_eval_with_output(
             "fun makeCounter() {
@@ -660,7 +661,7 @@ mod test {
             var c = makeCounter();
             print c();
             print a == c;
-            ", 
+            ",
             EvalResult::Ok, "1\n2\n3\ntrue\n1\nfalse\n", output
         );
         assert_eval_with_output(
@@ -669,10 +670,10 @@ mod test {
                 if (n < 2) return n;
                 return fib(n - 1) + fib(n - 2);
               }
-            
+
               print fib(8);
             }
-            ", 
+            ",
             EvalResult::Ok, "21\n", output
         );
     }
