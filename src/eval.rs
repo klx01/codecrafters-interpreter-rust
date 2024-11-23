@@ -1,5 +1,5 @@
+use std::borrow::Cow;
 use std::io::{stdout, Write};
-use std::rc::Rc;
 use std::time::SystemTime;
 use crate::parser_expressions::{parse_expression, BinaryOperator, Expression, ExpressionBody, UnaryOperator};
 use crate::parser_statements::{parse_scope, Scope, Statement, StatementBody};
@@ -235,7 +235,7 @@ fn eval_expr<'a>(expr: &Expression<'a>, memory: &mut Memory<'a>, output: &mut im
                     (Value::String(left), Value::String(right)) => {
                         // todo: this is really not optimal if this is the only remaining usage of left, or if any of them is empty
                         let res = format!("{left}{right}");
-                        Some(Value::String(Rc::new(res)))
+                        Some(Value::String(Cow::Owned(res)))
                     }
                     (left, right) => {
                         eprintln!("expected both operands to be numbers or strings for {} at {loc}, got {left:?} and {right:?}", expr.op);

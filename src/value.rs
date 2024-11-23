@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::fmt::{Display, Formatter};
 use std::ptr;
@@ -9,7 +10,7 @@ use crate::tokenizer::Location;
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) enum Value<'a> {
     Number(f64),
-    String(Rc<String>), // todo: consider using CoW?
+    String(Cow<'a, str>),
     Bool(bool),
     Nil,
     NativeFunction(&'static str),
