@@ -83,7 +83,7 @@ fn eval_statement(statement: &Statement, memory: &mut Memory, output: &mut impl 
         StatementBody::Expression(expr) => { eval_expr(expr, memory, output)?; },
         StatementBody::VariableDeclaration { name, value } => {
             let value = eval_expr(value, memory, output)?;
-            memory.declare_variable(name, value, statement.loc)?;
+            memory.declare_variable(name, value, statement.start)?;
         },
         StatementBody::Scope(scope) => {
             memory.enter_scope();
@@ -146,7 +146,7 @@ fn eval_statement(statement: &Statement, memory: &mut Memory, output: &mut impl 
             }
         }
         StatementBody::FunctionDeclaration(func) => {
-            memory.declare_user_function(func, statement.loc)?;
+            memory.declare_user_function(func, statement.start)?;
         }
         StatementBody::Return(expr) => {
             let res = eval_expr(expr, memory, output)?;
@@ -157,7 +157,7 @@ fn eval_statement(statement: &Statement, memory: &mut Memory, output: &mut impl 
 }
 
 fn eval_expr(expr: &Expression, memory: &mut Memory, output: &mut impl Write) -> Option<Value> {
-    let loc = expr.loc;
+    let loc = expr.start;
     match &expr.body {
         ExpressionBody::Literal(x) => Some(x.clone()), // todo: is it possible to not clone this when we don't actually need to?
         ExpressionBody::Unary(expr) => {
@@ -296,7 +296,7 @@ fn eval_expr(expr: &Expression, memory: &mut Memory, output: &mut impl Write) ->
                     Some(return_value)
                 }
                 _ => {
-                    eprintln!("Value {value} is not callable at {}", expr.loc);
+                    eprintln!("Value {value} is not callable at {} - {}", expr.start, expr.end);
                     None
                 },
             }

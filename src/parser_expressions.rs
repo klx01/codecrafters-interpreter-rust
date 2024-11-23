@@ -16,7 +16,8 @@ pub(crate) enum ExpressionBody {
 #[derive(Debug)]
 pub(crate) struct Expression {
     pub body: ExpressionBody,
-    pub loc: Location,
+    pub start: Location,
+    pub end: Location,
 }
 
 impl Display for ExpressionBody {
@@ -122,23 +123,24 @@ pub(crate) fn parse_expression_from_string(str: &str) -> Option<Expression> {
     Some(expr)
 }
 
-pub(crate) fn parse_expression<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Expression, &'a [Token])> {
-    parse_assignment(tail, parent)
+pub(crate) fn parse_expression(tail: &[Token], prev_end: Option<Location>) -> Option<(Expression, &[Token])> {
+    parse_assignment(tail, prev_end)
 }
 
-fn parse_assignment<'a>(mut tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Expression, &'a [Token])> {
-    if let Some((left, tail2)) = parse_operand(tail, parent) {
+fn parse_assignment(mut tail: &[Token], prev_end: Option<Location>) -> Option<(Expression, &[Token])> {
+    if let Some((left, tail2)) = parse_operand(tail, prev_end) {
         match left.body {
             ExpressionBody::Variable(var) => {
                 if let Some((next, tail2)) = tail2.split_first() {
                     if next.kind == TokenKind::EQUAL {
                         tail = tail2;
-                        let (right, tail2) = parse_assignment(tail, Some(next))?;
+                        let (right, tail2) = parse_assignment(tail, Some(next.end))?;
                         tail = tail2;
-                        let loc = left.loc;
+                        let start = left.start;
+                        let end = right.end;
                         let expr = AssignmentExpression{ var, expr: right };
                         let expr = ExpressionBody::Assignment(Box::new(expr));
-                        let expr = Expression{ body: expr, loc };
+                        let expr = Expression{ body: expr, start, end };
                         return Some((expr, tail));
                     }
                 };
@@ -146,15 +148,15 @@ fn parse_assignment<'a>(mut tail: &'a [Token], parent: Option<&'a Token>) -> Opt
             _ => {},
         }
     };
-    parse_binary_expression(tail, parent, 6)
+    parse_binary_expression(tail, prev_end, 6)
 }
 
-fn parse_binary_expression<'a>(tail: &'a [Token], parent: Option<&'a Token>, parent_priority: u8) -> Option<(Expression, &'a [Token])> {
+fn parse_binary_expression(tail: &[Token], prev_end: Option<Location>, parent_priority: u8) -> Option<(Expression, &[Token])> {
     if parent_priority == 0 {
-        return parse_operand(tail, parent);
+        return parse_operand(tail, prev_end);
     }
     let current_priority = parent_priority - 1;
-    let (mut left, mut tail) = parse_binary_expression(tail, parent, current_priority)?;
+    let (mut left, mut tail) = parse_binary_expression(tail, prev_end, current_priority)?;
     loop {
         let Some((next, tail2)) = tail.split_first() else {
             break;
@@ -178,25 +180,27 @@ fn parse_binary_expression<'a>(tail: &'a [Token], parent: Option<&'a Token>, par
             break;
         }
         tail = tail2;
-        let (right, tail2) = parse_binary_expression(tail, Some(next), current_priority)?;
+        let (right, tail2) = parse_binary_expression(tail, Some(next.end), current_priority)?;
         tail = tail2;
-        let loc = left.loc;
+        let start = left.start;
+        let end = right.end;
         let expr = BinaryExpression{ op, left, right };
         let expr = ExpressionBody::Binary(Box::new(expr));
-        left = Expression{body: expr, loc };
+        left = Expression{body: expr, start, end };
     }
     Some((left, tail))
 }
 
-fn parse_operand<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Expression, &'a [Token])> {
-    let (mut expr, mut tail) = parse_operand_inner(tail, parent)?;
+fn parse_operand(tail: &[Token], prev_end: Option<Location>) -> Option<(Expression, &[Token])> {
+    let (mut expr, mut tail) = parse_operand_inner(tail, prev_end)?;
     loop {
         let (paren, tail2) = check_token_kind(tail, TokenKind::LEFT_PAREN);
         tail = tail2;
         if let Some(paren) = paren {
-            let (args, tail2) = parse_call_args(tail, paren)?;
+            let (args, tail2, last_token) = parse_call_args(tail, paren.end)?;
             tail = tail2;
-            expr = Expression{ body: ExpressionBody::Call{ expr: Box::new(expr), args }, loc: paren.loc };
+            let start = expr.start;
+            expr = Expression{ body: ExpressionBody::Call{ expr: Box::new(expr), args }, start, end: last_token.end };
         } else {
             break;
         }
@@ -204,15 +208,11 @@ fn parse_operand<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Ex
     Some((expr, tail))
 }
 
-fn parse_operand_inner<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Expression, &'a [Token])> {
+fn parse_operand_inner(tail: &[Token], prev_end: Option<Location>) -> Option<(Expression, &[Token])> {
     let Some((token, tail)) = tail.split_first() else {
-        match parent {
+        match prev_end {
             None => eprintln!("empty input"),
-            Some(parent) => eprintln!(
-                "Unexpectedly reached the end of the token stream when parsing {:?} at {}",
-                parent.kind,
-                parent.loc,
-            ),
+            Some(loc) => eprintln!("Unexpectedly reached the end of the token stream at {loc}, expected expression operand"),
         }
         return None;
     };
@@ -220,7 +220,7 @@ fn parse_operand_inner<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Opti
     match token.kind {
         TokenKind::IDENTIFIER => {
             let name = token.code.clone(); // todo: check if we can remove copying here
-            let expr = Expression{ body: ExpressionBody::Variable(name), loc: token.loc };
+            let expr = Expression{ body: ExpressionBody::Variable(name), start: token.start, end: token.end };
             return Some((expr, tail));
         }
         _ => {},
@@ -245,14 +245,14 @@ fn parse_operand_inner<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Opti
     };
     if let Some(literal) = literal {
         let body = ExpressionBody::Literal(literal);
-        return Some((Expression{ body, loc: token.loc }, tail));
+        return Some((Expression{ body, start: token.start, end: token.end }, tail));
     }
 
     if token.kind == TokenKind::LEFT_PAREN {
-        let (inner, tail) = parse_expression(tail, Some(token))?;
-        let (_, tail) = expect_token_kind(tail, TokenKind::RIGHT_PAREN, token.loc)?;
+        let (inner, tail) = parse_expression(tail, Some(token.end))?;
+        let (close, tail) = expect_token_kind(tail, TokenKind::RIGHT_PAREN, inner.end)?;
         let body = ExpressionBody::Grouping(Box::new(inner));
-        return Some((Expression{body, loc: token.loc}, tail));
+        return Some((Expression{body, start: token.start, end: close.end}, tail));
     }
 
     let unary_op = match token.kind {
@@ -261,52 +261,53 @@ fn parse_operand_inner<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Opti
         _ => None,
     };
     if let Some(op) = unary_op {
-        let (inner, tail) = parse_operand(tail, Some(token))?;
+        let (inner, tail) = parse_operand(tail, Some(token.end))?;
+        let end = inner.end;
         let expr = UnaryExpression{ op, ex: inner };
         let body = ExpressionBody::Unary(Box::new(expr));
-        return Some((Expression{ body, loc: token.loc }, tail));
+        return Some((Expression{ body, start: token.start, end }, tail));
     }
 
-    eprintln!("Unexpected token kind {:?} at {}", token.kind, token.loc);
+    eprintln!("Unexpected token kind {:?} at {}", token.kind, token.start);
     None
 }
 
-fn parse_call_args<'a>(mut tail: &'a [Token], parent: &'a Token) -> Option<(Vec<Expression>, &'a [Token])> {
+fn parse_call_args(mut tail: &[Token], mut prev_end: Location) -> Option<(Vec<Expression>, &[Token], &Token)> {
     let mut args = vec![];
     loop {
         let (paren, tail2) = check_token_kind(tail, TokenKind::RIGHT_PAREN);
         tail = tail2;
-        if paren.is_some() {
-            return Some((args, tail));
+        if let Some(paren) = paren {
+            return Some((args, tail, paren));
         }
-        let (expression, tail2) = parse_expression(tail, Some(parent))?; // todo: fix parent for parse expression
+        let (expression, tail2) = parse_expression(tail, Some(prev_end))?;
         tail = tail2;
-        args.push(expression);
         let Some((next, tail2)) = tail.split_first() else {
-            eprintln!("Unexpected end of token stream, expected ) or , in arguments list for a function call at {}", parent.loc); // todo: fix location
+            eprintln!("Unexpected end of token stream, expected ) or , at {}", expression.end);
             return None;
         };
+        args.push(expression);
         tail = tail2;
         match next.kind {
-            TokenKind::COMMA => {},
-            TokenKind::RIGHT_PAREN => return Some((args, tail)),
+            TokenKind::COMMA => prev_end = next.end,
+            TokenKind::RIGHT_PAREN => return Some((args, tail, next)),
             _ => {
-                eprintln!("Expected ) or , but found {next} at {}", next.loc);
+                eprintln!("Expected ) or , but found {next} at {}", next.start);
                 return None;
             },
         }
     }
 }
 
-pub(crate) fn expect_token_kind(tail: &[Token], expected: TokenKind, start_loc: Location) -> Option<(&Token, &[Token])> {
+pub(crate) fn expect_token_kind(tail: &[Token], expected: TokenKind, prev_end: Location) -> Option<(&Token, &[Token])> {
     let Some((head, tail)) = tail.split_first() else {
-        eprintln!("Unexpected end of token stream, expected {expected:?} in a statement that starts at {start_loc}");
+        eprintln!("Unexpected end of token stream, expected {expected:?} at {prev_end}");
         return None;
     };
     if head.kind == expected {
         Some((head, tail))
     } else {
-        eprintln!("Expected {expected:?}, found {head} at {}", head.loc);
+        eprintln!("Expected {expected:?}, found {head} at {}", head.start);
         None
     }
 }

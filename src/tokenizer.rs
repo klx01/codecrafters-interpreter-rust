@@ -59,9 +59,10 @@ impl Display for Location {
 #[derive(Debug, PartialEq)]
 pub(crate) struct Token {
     pub kind: TokenKind,
-    pub code: String,
-    pub literal: Option<String>,
-    pub loc: Location,
+    pub code: String, // todo: check if this can be &str instead
+    pub literal: Option<String>, // todo: check if i can include parsed literal into the token kind
+    pub start: Location,
+    pub end: Location, // todo: check if i can keep only 1 location
 }
 impl Display for Token {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -83,14 +84,15 @@ pub(crate) fn tokenize_string(str: &str) -> (Vec<Token>, bool) {
         kind: TokenKind::EOF,
         code: "".to_string(),
         literal: None,
-        loc: Location{row: 0, col: 0}
+        start: Location{row: 0, col: 0},
+        end: Location{row: 0, col: 0},
     };
     tokens.push(eof);
     (tokens, has_errors)
 }
 
 pub(crate) fn tokenize_string_no_eof(str: &str) -> (Vec<Token>, bool) {
-    let chars = str.chars().collect::<Vec<_>>();
+    let chars = str.chars().collect::<Vec<_>>(); // todo: check if this can be done without vec of chars, just using the original &str
     let mut row = 1usize;
     let mut col = 0usize;
     let mut tokens = vec![];
@@ -140,8 +142,10 @@ pub(crate) fn tokenize_string_no_eof(str: &str) -> (Vec<Token>, bool) {
             };
             if let Some(kind) = matched_kind {
                 index += 1;
+                let start = Location { row, col };
                 col += 1;
-                let token = Token{ kind, code: format!("{char}{next}"), literal: None, loc: Location{row, col} };
+                let end = Location { row, col };
+                let token = Token{ kind, code: format!("{char}{next}"), literal: None, start, end };
                 tokens.push(token);
                 continue;
             }
@@ -174,12 +178,14 @@ pub(crate) fn tokenize_string_no_eof(str: &str) -> (Vec<Token>, bool) {
             _ => None,
         };
         if let Some(kind) = char_token_kind {
-            let token = Token{ kind, code: char.to_string(), literal: None, loc: Location{row, col} };
+            let start = Location { row, col };
+            let token = Token{ kind, code: char.to_string(), literal: None, start, end: start };
             tokens.push(token);
             continue;
         }
 
         if char.is_ascii_digit() {
+            let start = Location { row, col };
             let mut integer = String::from(char);
             while (index < len) && chars[index].is_ascii_digit() {
                 integer.push(chars[index]);
@@ -200,19 +206,22 @@ pub(crate) fn tokenize_string_no_eof(str: &str) -> (Vec<Token>, bool) {
                     col -= 1;
                 }
             }
+            let end = Location { row, col };
 
             let fraction_trimmed = fraction.trim_end_matches('0');
             let token = Token{
                 kind: TokenKind::NUMBER,
                 code: if fraction.is_empty() { integer.clone() } else { format!("{integer}.{fraction}") },
                 literal: Some(format!("{integer}.{}", if fraction_trimmed.is_empty() { "0" } else { fraction_trimmed })),
-                loc: Location{row, col}
+                start,
+                end,
             };
             tokens.push(token);
             continue;
         }
 
         if char == '"' {
+            let start = Location { row, col };
             // todo: this does not handle escaped quotes \"
             let mut literal = String::new();
             while (index < len) && (chars[index] != '"') {
@@ -232,11 +241,13 @@ pub(crate) fn tokenize_string_no_eof(str: &str) -> (Vec<Token>, bool) {
                 let close_char = chars[index];
                 index += 1;
                 col += 1;
+                let end = Location { row, col };
                 let token = Token{
                     kind: TokenKind::STRING,
                     code: format!("{char}{literal}{close_char}"),
                     literal: Some(literal),
-                    loc: Location{row, col}
+                    start, 
+                    end,
                 };
                 tokens.push(token);
             }
@@ -244,17 +255,20 @@ pub(crate) fn tokenize_string_no_eof(str: &str) -> (Vec<Token>, bool) {
         }
 
         if is_identifier_char(char) {
+            let start = Location { row, col };
             let mut code = String::from(char);
             while (index < len) && is_identifier_char(chars[index]) {
                 code.push(chars[index]);
                 index += 1;
                 col += 1;
             }
+            let end = Location { row, col };
             let token = Token{
                 kind: reserved.get(code.as_str()).cloned().unwrap_or(TokenKind::IDENTIFIER),
                 code,
                 literal: None,
-                loc: Location{row, col}
+                start,
+                end,
             };
             tokens.push(token);
             continue;

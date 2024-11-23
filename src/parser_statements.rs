@@ -78,7 +78,8 @@ impl Display for StatementBody {
 #[derive(Debug)]
 pub(crate) struct Statement {
     pub body: StatementBody,
-    pub loc: Location,
+    pub start: Location,
+    pub end: Location,
 }
 impl Display for Statement {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -88,15 +89,13 @@ impl Display for Statement {
 
 enum ParseResult {
     Statement(Statement),
-    Nop,
-    ExitScope,
+    Nop{start: Location, end: Location},
+    ExitScope(Location),
 }
 
 #[derive(Debug)]
 pub(crate) struct Scope {
     pub statements: Vec<Statement>,
-    pub start: Location,
-    pub end: Location,
 }
 impl Display for Scope {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -111,10 +110,9 @@ impl Display for Scope {
 pub(crate) fn parse_statement_list_from_string(str: &str) -> Option<Scope> {
     // todo: how should we handle token errors?
     let (tokens, _has_errors) = tokenize_string_no_eof(str);
-    let (scope, tail) = parse_scope(&tokens, true)?;
-    assert!(tail.is_empty(), "tail for top scope should always be empty");
+    let (scope, tail, _, end) = parse_scope(&tokens, None)?;
     if !tail.is_empty() {
-        eprintln!("Unexpected end of scope at {}", scope.end);
+        eprintln!("Unexpected end of scope at {}", end);
         return None;
     }
     Some(scope)
@@ -123,35 +121,37 @@ pub(crate) fn parse_statement_list_from_string(str: &str) -> Option<Scope> {
 #[cfg(test)]
 pub(crate) fn parse_statement_from_string(str: &str) -> Option<Statement> {
     let (tokens, _has_errors) = tokenize_string_no_eof(str);
-    let (parse_result, tail) = parse_statement(&tokens)?;
-    if !tail.is_empty() {
-        eprintln!("extra tokens found after the end of statement");
+    let (parse_result, tail) = parse_statement(&tokens, None)?;
+    if let Some(first) = tail.first() {
+        eprintln!("extra tokens found after the end of statement at {}", first.start);
     }
     match parse_result {
         ParseResult::Statement(x) => Some(x),
-        ParseResult::Nop => None,
-        ParseResult::ExitScope => None,
+        ParseResult::Nop{..} => None,
+        ParseResult::ExitScope{..} => None,
     }
 }
 
-pub(crate) fn parse_scope(mut tail: &[Token], is_top_scope: bool) -> Option<(Scope, &[Token])> {
-    let start_loc = if let Some(first) = tail.first() {
-        first.loc
-    } else {
-        Location { row: 0, col: 0 }
-    };
+pub(crate) fn parse_scope(mut tail: &[Token], open_location: Option<Location>) -> Option<(Scope, &[Token], Location, Location)> {
+    let is_top_scope = open_location.is_none();
+    let start_loc = open_location.unwrap_or(Location { row: 0, col: 0 });
     let mut end_loc = start_loc;
     let mut statements = vec![];
     let mut is_closed = false;
 
     while !tail.is_empty() {
-        end_loc = tail.first().unwrap().loc;
-        let (parse_result, tail2) = parse_statement(tail)?;
+        let (parse_result, tail2) = parse_statement(tail, None)?;
         tail = tail2;
         match parse_result {
-            ParseResult::Statement(stmt) => statements.push(stmt),
-            ParseResult::Nop => {}
-            ParseResult::ExitScope => {
+            ParseResult::Statement(stmt) => { 
+                end_loc = stmt.end;
+                statements.push(stmt);
+            },
+            ParseResult::Nop{end, ..} => {
+                end_loc = end;
+            }
+            ParseResult::ExitScope(end) => {
+                end_loc = end;
                 is_closed = true;
                 break;
             } 
@@ -164,54 +164,60 @@ pub(crate) fn parse_scope(mut tail: &[Token], is_top_scope: bool) -> Option<(Sco
         eprintln!("Scope that starts at {start_loc} is not closed");
         return None;
     }
-    let scope = Scope{ statements, start: start_loc, end: end_loc };
-    Some((scope, tail))
+    let scope = Scope{ statements };
+    Some((scope, tail, start_loc, end_loc))
 }
 
-fn parse_statement(tail: &[Token]) -> Option<(ParseResult, &[Token])> {
+fn parse_statement(tail: &[Token], prev_end: Option<Location>) -> Option<(ParseResult, &[Token])> {
     let orig_tail = tail;
     let Some((head, tail)) = tail.split_first() else {
-        eprintln!("Unexpected end of token stream, expected start of a statement");
+        match prev_end {
+            None => eprintln!("empty input"),
+            Some(loc) => eprintln!("Unexpectedly reached the end of the token stream at {loc}, expected statement"),
+        }
         return None;
     };
-    let loc = head.loc; // todo: fix locations, use actual locations instead of head location
+
+
+    let start = head.start;
     match head.kind {
-        TokenKind::SEMICOLON => Some((ParseResult::Nop, tail)),
+        TokenKind::SEMICOLON => Some((ParseResult::Nop{start, end:start}, tail)),
         TokenKind::PRINT => {
-            let (expr, tail) = parse_expression(tail, Some(head))?;
-            let tail = check_statement_terminated(tail, loc)?;
-            let stmt = Statement { body: StatementBody::Print(expr), loc };
+            let (expr, tail) = parse_expression(tail, Some(head.end))?;
+            let (tail, end) = check_statement_terminated(tail, expr.end)?;
+            let stmt = Statement { body: StatementBody::Print(expr), start, end };
             Some((ParseResult::Statement(stmt), tail))
         },
         TokenKind::NUMBER | TokenKind::STRING | TokenKind::IDENTIFIER
             | TokenKind::NIL | TokenKind::TRUE | TokenKind::FALSE
             | TokenKind::LEFT_PAREN | TokenKind::MINUS | TokenKind::BANG => {
-            let (expr, tail) = parse_expression(orig_tail, Some(head))?;
-            let tail = check_statement_terminated(tail, loc)?;
-            let stmt = Statement { body: StatementBody::Expression(expr), loc };
+            let (expr, tail) = parse_expression(orig_tail, Some(head.end))?;
+            let (tail, end) = check_statement_terminated(tail, expr.end)?;
+            let stmt = Statement { body: StatementBody::Expression(expr), start, end };
             Some((ParseResult::Statement(stmt), tail))
         },
         TokenKind::VAR => {
-            let (name, tail) = expect_token_kind(tail, TokenKind::IDENTIFIER, loc)?;
+            let (name, tail) = expect_token_kind(tail, TokenKind::IDENTIFIER, head.end)?;
             let Some((next, tail)) = tail.split_first() else {
-                eprintln!("Unexpected end of token stream, expected = or ; in variable declaration after {}", name.loc);
+                eprintln!("Unexpected end of token stream, expected = or ; at {}", name.end);
                 return None;
             };
-            let (expr, tail) = match next.kind {
+            let (expr, tail, end) = match next.kind {
                 TokenKind::EQUAL => {
-                    let (expr, tail) = parse_expression(tail, Some(next))?;
-                    let tail = check_statement_terminated(tail, loc)?;
-                    (expr, tail)
+                    let (expr, tail) = parse_expression(tail, Some(next.end))?;
+                    let (tail, end) = check_statement_terminated(tail, expr.end)?;
+                    (expr, tail, end)
                 }
                 TokenKind::SEMICOLON => {
                     let expr = Expression{
                         body: ExpressionBody::Literal(Value::Nil),
-                        loc: next.loc,
+                        start: next.start,
+                        end: next.end,
                     };
-                    (expr, tail)
+                    (expr, tail, next.end)
                 }
                 _ => {
-                    eprintln!("Expected = or ;, found {next} at {}", next.loc);
+                    eprintln!("Expected = or ;, found {next} at {}", next.start);
                     return None;
                 },
             };
@@ -220,53 +226,53 @@ fn parse_statement(tail: &[Token]) -> Option<(ParseResult, &[Token])> {
                 name: name.code.clone(), // todo: check if we can remove copying here
                 value: expr,
             };
-            let stmt = Statement { body, loc };
+            let stmt = Statement { body, start, end };
             Some((ParseResult::Statement(stmt), tail))
         },
         TokenKind::LEFT_BRACE => {
-            let (scope, tail) = parse_scope(tail, false)?;
+            let (scope, tail, start, end) = parse_scope(tail, Some(head.start))?;
             if scope.statements.is_empty() {
-                return Some((ParseResult::Nop, tail));
+                return Some((ParseResult::Nop{start, end}, tail));
             }
             let body = StatementBody::Scope(scope);
-            let stmt = Statement { body, loc };
+            let stmt = Statement { body, start, end };
             Some((ParseResult::Statement(stmt), tail))
         },
         TokenKind::RIGHT_BRACE => {
-            Some((ParseResult::ExitScope, tail))
+            Some((ParseResult::ExitScope(head.end), tail))
         },
         TokenKind::IF => {
-            let _ = expect_token_kind(tail, TokenKind::LEFT_PAREN, loc)?;
-            let (condition, tail) = parse_expression(tail, Some(head))?;
-            let (body, tail) = parse_control_flow_body(tail)?;
+            let _ = expect_token_kind(tail, TokenKind::LEFT_PAREN, head.end)?;
+            let (condition, tail) = parse_expression(tail, Some(head.end))?;
+            let (body, tail, if_end) = parse_control_flow_body(tail, condition.end)?;
             let (els, tail) = check_token_kind(tail, TokenKind::ELSE);
-            let (else_body, tail) = if els.is_some() {
-                parse_control_flow_body(tail)?
+            let (else_body, tail, end) = if let Some(els) = els {
+                parse_control_flow_body(tail, els.end)?
             } else {
-                (None, tail)
+                (None, tail, if_end)
             };
             let if_body = StatementBody::If {
                 condition,
                 body: body.map(|x| Box::new(x)),
                 else_body: else_body.map(|x| Box::new(x)),
             };
-            let stmt = Statement{body: if_body, loc};
+            let stmt = Statement{body: if_body, start, end};
             Some((ParseResult::Statement(stmt), tail))
         },
         TokenKind::WHILE => {
-            let _ = expect_token_kind(tail, TokenKind::LEFT_PAREN, loc)?;
-            let (condition, tail) = parse_expression(tail, Some(head))?;
-            let (body, tail) = parse_control_flow_body(tail)?;
+            let _ = expect_token_kind(tail, TokenKind::LEFT_PAREN, head.end)?;
+            let (condition, tail) = parse_expression(tail, Some(head.end))?;
+            let (body, tail, end) = parse_control_flow_body(tail, condition.end)?;
             let while_body = StatementBody::While {
                 condition,
                 body: body.map(|x| Box::new(x)),
             };
-            let stmt = Statement{body: while_body, loc};
+            let stmt = Statement{body: while_body, start, end};
             Some((ParseResult::Statement(stmt), tail))
         },
         TokenKind::FOR => {
-            let (_, tail) = expect_token_kind(tail, TokenKind::LEFT_PAREN, loc)?;
-            let (init, tail) = parse_actual_statement(tail)?;
+            let (paren, tail) = expect_token_kind(tail, TokenKind::LEFT_PAREN, head.end)?;
+            let (init, tail, init_end) = parse_actual_statement(tail, paren.end)?;
             if let Some(init_stmt) = init.as_ref() {
                 let is_allowed = match init_stmt.body {
                     StatementBody::Print(_)
@@ -275,28 +281,28 @@ fn parse_statement(tail: &[Token]) -> Option<(ParseResult, &[Token])> {
                     _ => false,
                 };
                 if !is_allowed {
-                    eprintln!("This type of statement is not allowed at the init section of for loop at {}", init_stmt.loc);
+                    eprintln!("This type of statement is not allowed at the init section of for loop at {}", init_stmt.start);
                     return None;
                 }
             }
             let (semi, tail) = check_token_kind(tail, TokenKind::SEMICOLON);
-            let (condition, tail) = if semi.is_none() {
-                let (condition, tail) = parse_expression(tail, Some(head))?;
-                let (_, tail) = expect_token_kind(tail, TokenKind::SEMICOLON, loc)?;
-                (condition, tail)
+            let (condition, tail, cond_end) = if let Some(semi) = semi {
+                (Expression{ body: ExpressionBody::Literal(Value::Bool(true)), start: semi.start, end: semi.end }, tail, semi.end)
             } else {
-                (Expression{ body: ExpressionBody::Literal(Value::Bool(true)), loc }, tail)
+                let (condition, tail) = parse_expression(tail, Some(init_end))?;
+                let (semi, tail) = expect_token_kind(tail, TokenKind::SEMICOLON, condition.end)?;
+                (condition, tail, semi.end)
             };
 
             let (close, tail) = check_token_kind(tail, TokenKind::RIGHT_PAREN);
-            let (increment, tail) = if close.is_none() {
-                let (increment, tail) = parse_expression(tail, Some(head))?;
-                let (_, tail) = expect_token_kind(tail, TokenKind::RIGHT_PAREN, loc)?;
-                (Some(increment), tail)
+            let (increment, tail, incr_end) = if let Some(close) = close {
+                (None, tail, close.end)
             } else {
-                (None, tail)
+                let (increment, tail) = parse_expression(tail, Some(cond_end))?;
+                let (close, tail) = expect_token_kind(tail, TokenKind::RIGHT_PAREN, increment.end)?;
+                (Some(increment), tail, close.end)
             };
-            let (body, tail) = parse_control_flow_body(tail)?;
+            let (body, tail, end) = parse_control_flow_body(tail, incr_end)?;
 
             let for_body = StatementBody::For {
                 init: init.map(|x| Box::new(x)),
@@ -304,116 +310,115 @@ fn parse_statement(tail: &[Token]) -> Option<(ParseResult, &[Token])> {
                 increment,
                 body: body.map(|x| Box::new(x)),
             };
-            let stmt = Statement{body: for_body, loc};
+            let stmt = Statement{body: for_body, start, end};
 
             // added a scope to make sure that variables that are declared in the init part stay in this scope
             // could be resolved at the evaluation stage, but this way was more simple
             let wrapper_scope = Scope {
                 statements: vec![stmt],
-                start: loc,
-                end: Location { row: 0, col: 0 }, // todo: set the actual end location
             };
-            let wrapper_scope = Statement{body: StatementBody::Scope(wrapper_scope), loc};
+            let wrapper_scope = Statement{body: StatementBody::Scope(wrapper_scope), start, end};
 
             Some((ParseResult::Statement(wrapper_scope), tail))
         },
         TokenKind::FUN => {
-            let (name, tail) = expect_token_kind(tail, TokenKind::IDENTIFIER, loc)?;
+            let (name, tail) = expect_token_kind(tail, TokenKind::IDENTIFIER, head.end)?;
+            let (paren, tail) = expect_token_kind(tail, TokenKind::LEFT_PAREN, name.end)?;
             let name = name.code.clone(); // todo: check if we can remove copying here
-            let (_, tail) = expect_token_kind(tail, TokenKind::LEFT_PAREN, loc)?;
-            let (args, tail) = parse_call_args(tail, &name, loc)?;
-            let (_, tail) = expect_token_kind(tail, TokenKind::LEFT_BRACE, loc)?;
-            let (scope, tail) = parse_scope(tail, false)?;
+            let (args, tail, last_token) = parse_call_args(tail, &name, paren.end)?;
+            let (brace, tail) = expect_token_kind(tail, TokenKind::LEFT_BRACE, last_token.end)?;
+            let (scope, tail, _, end) = parse_scope(tail, Some(brace.start))?;
             let func = FunctionValue{
                 name,
                 args,
                 body: scope,
-                loc,
+                loc: start,
             };
             let body = StatementBody::FunctionDeclaration(Rc::new(func).into());
-            let stmt = Statement{body, loc};
+            let stmt = Statement{body, start, end};
             Some((ParseResult::Statement(stmt), tail))
         },
         TokenKind::RETURN => {
-            let (semicolon, tail) = check_token_kind(tail, TokenKind::SEMICOLON);
-            let (expr, tail) = if semicolon.is_none() {
-                let (expr, tail) = parse_expression(tail, Some(head))?;
-                let tail = check_statement_terminated(tail, loc)?;
-                (expr, tail)
+            let (semi, tail) = check_token_kind(tail, TokenKind::SEMICOLON);
+            let (expr, tail, end) = if let Some(semi) = semi {
+                let expr = Expression { body: ExpressionBody::Literal(Value::Nil), start: semi.start, end: semi.end };
+                (expr, tail, semi.end)
             } else {
-                let expr = Expression { body: ExpressionBody::Literal(Value::Nil), loc };
-                (expr, tail)
+                let (expr, tail) = parse_expression(tail, Some(head.end))?;
+                let (tail, end) = check_statement_terminated(tail, expr.end)?;
+                (expr, tail, end)
             };
-            let stmt = Statement { body: StatementBody::Return(expr), loc };
+            let stmt = Statement { body: StatementBody::Return(expr), start, end };
             Some((ParseResult::Statement(stmt), tail))
         },
         _ => {
-            eprintln!("Unexpected token {head} at {loc}, expected a start of a statement");
+            eprintln!("Unexpected token {head} at {}, expected a start of a statement", head.start);
             None
         },
     }
 }
 
-fn parse_control_flow_body(tail: &[Token]) -> Option<(Option<Statement>, &[Token])> {
-    let (stmt, tail) = parse_actual_statement(tail)?;
+fn parse_control_flow_body(tail: &[Token], prev_end: Location) -> Option<(Option<Statement>, &[Token], Location)> {
+    let (stmt, tail, end) = parse_actual_statement(tail, prev_end)?;
     let stmt = match stmt {
         Some(x) => {
             if matches!(x.body, StatementBody::VariableDeclaration {..}) {
-                eprintln!("Variable declaration is not allowed as a body of control flow structures for some reason at {}", x.loc);
+                eprintln!("Variable declaration is not allowed as a body of control flow structures, found at {}", x.start);
                 return None;
             }
             Some(x)
         }
         None => None,
     };
-    Some((stmt, tail))
+    Some((stmt, tail, end))
 }
 
-fn parse_actual_statement(tail: &[Token]) -> Option<(Option<Statement>, &[Token])> {
-    let tail_orig = tail;
-    let (parse_result, tail) = parse_statement(tail)?;
+fn parse_actual_statement(tail: &[Token], prev_end: Location) -> Option<(Option<Statement>, &[Token], Location)> {
+    let (parse_result, tail) = parse_statement(tail, Some(prev_end))?;
     match parse_result {
-        ParseResult::Statement(stmt) => Some((Some(stmt), tail)),
-        ParseResult::Nop => Some((None, tail)),
-        ParseResult::ExitScope => {
-            let loc = tail_orig.first().unwrap().loc;
+        ParseResult::Statement(stmt) => {
+            let end = stmt.end;
+            Some((Some(stmt), tail, end))
+        },
+        ParseResult::Nop{end, ..} => Some((None, tail, end)),
+        ParseResult::ExitScope(loc) => {
             eprintln!("Got closing brace when expecting statement at {loc}");
             None
         }
     }
 }
 
-fn check_statement_terminated(tail: &[Token], start_loc: Location) -> Option<&[Token]> {
-    let (_, tail) = expect_token_kind(tail, TokenKind::SEMICOLON, start_loc)?;
-    Some(tail)
+fn check_statement_terminated(tail: &[Token], start_loc: Location) -> Option<(&[Token], Location)> {
+    let (token, tail) = expect_token_kind(tail, TokenKind::SEMICOLON, start_loc)?;
+    Some((tail, token.end))
 }
 
-fn parse_call_args<'a, 'b>(mut tail: &'a [Token], func_name: &'b str, loc: Location) -> Option<(Vec<String>, &'a [Token])> {
+fn parse_call_args<'a, 'b>(mut tail: &'a [Token], func_name: &'b str, mut prev_end: Location) -> Option<(Vec<String>, &'a [Token], &'a Token)> {
     let mut args = vec![];
     loop {
         let (paren, tail2) = check_token_kind(tail, TokenKind::RIGHT_PAREN);
         tail = tail2;
-        if paren.is_some() {
-            return Some((args, tail));
+        if let Some(paren) = paren {
+            return Some((args, tail, paren));
         }
-        let (arg, tail2) = expect_token_kind(tail, TokenKind::IDENTIFIER, loc)?; // todo: fix location
+        let (arg, tail2) = expect_token_kind(tail, TokenKind::IDENTIFIER, prev_end)?;
         tail = tail2;
         let arg_name = arg.code.clone(); // todo: check if it's possible not to clone this
         if arg_name == func_name {
-            eprintln!("argument name can not be the same as function name at {}", arg.loc);
+            eprintln!("argument name can not be the same as function name at {}", arg.start);
             return None;
         }
         args.push(arg_name);
         let Some((next, tail2)) = tail.split_first() else {
-            eprintln!("Unexpected end of token stream, expected ) or , in arguments list for a function declaration after {}", arg.loc);
+            eprintln!("Unexpected end of token stream, expected ) or , at {}", arg.end);
             return None;
         };
         tail = tail2;
         match next.kind {
-            TokenKind::COMMA => {},
-            TokenKind::RIGHT_PAREN => return Some((args, tail)),
+            TokenKind::COMMA => prev_end = next.end,
+            TokenKind::RIGHT_PAREN => return Some((args, tail, next)),
             _ => {
-                eprintln!("Expected ) or , but found {next} at {}", next.loc);
+                eprintln!("Expected ) or , but found {next} at {}", next.start);
                 return None;
             },
         }
