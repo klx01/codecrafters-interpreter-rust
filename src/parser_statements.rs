@@ -1,22 +1,21 @@
 use std::fmt::{Display, Formatter, Write};
-use std::rc::Rc;
 use crate::parser_expressions::{parse_expression, Expression, ExpressionBody, expect_token_kind, check_token_kind};
 use crate::tokenizer::{tokenize_string_no_eof, Location, Token, TokenKind};
-use crate::value::{FunctionRef, FunctionValue, Value};
+use crate::value::{FunctionValue, Value};
 
 #[derive(Debug)]
-pub(crate) enum StatementBody {
-    Print(Expression),
-    Expression(Expression),
-    VariableDeclaration{name: String, value: Expression},
-    Scope(Scope),
-    If{condition: Expression, body: Option<Box<Statement>>, else_body: Option<Box<Statement>>},
-    While{condition: Expression, body: Option<Box<Statement>>},
-    For{init: Option<Box<Statement>>, condition: Expression, increment: Option<Expression>, body: Option<Box<Statement>>},
-    FunctionDeclaration(FunctionRef),
-    Return(Expression),
+pub(crate) enum StatementBody<'a> {
+    Print(Expression<'a>),
+    Expression(Expression<'a>),
+    VariableDeclaration{name: String, value: Expression<'a>},
+    Scope(Scope<'a>),
+    If{condition: Expression<'a>, body: Option<Box<Statement<'a>>>, else_body: Option<Box<Statement<'a>>>},
+    While{condition: Expression<'a>, body: Option<Box<Statement<'a>>>},
+    For{init: Option<Box<Statement<'a>>>, condition: Expression<'a>, increment: Option<Expression<'a>>, body: Option<Box<Statement<'a>>>},
+    FunctionDeclaration(FunctionValue<'a>),
+    Return(Expression<'a>),
 }
-impl Display for StatementBody {
+impl<'a> Display for StatementBody<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             StatementBody::Print(expr) => f.write_fmt(format_args!("print {expr};")),
@@ -63,7 +62,6 @@ impl Display for StatementBody {
                 }
             }
             StatementBody::FunctionDeclaration(func) => {
-                let func = &func.inner;
                 f.write_fmt(format_args!("fun {}(", func.name))?;
                 for arg in &func.args {
                     f.write_fmt(format_args!("{arg}, "))?;
@@ -76,28 +74,28 @@ impl Display for StatementBody {
 }
 
 #[derive(Debug)]
-pub(crate) struct Statement {
-    pub body: StatementBody,
+pub(crate) struct Statement<'a> {
+    pub body: StatementBody<'a>,
     pub start: Location,
     pub end: Location,
 }
-impl Display for Statement {
+impl<'a> Display for Statement<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!("{}", self.body))
     }
 }
 
-enum ParseResult {
-    Statement(Statement),
+enum ParseResult<'a> {
+    Statement(Statement<'a>),
     Nop{start: Location, end: Location},
     ExitScope(Location),
 }
 
 #[derive(Debug)]
-pub(crate) struct Scope {
-    pub statements: Vec<Statement>,
+pub(crate) struct Scope<'a> {
+    pub statements: Vec<Statement<'a>>,
 }
-impl Display for Scope {
+impl<'a> Display for Scope<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_str("{ ")?;
         for stmt in &self.statements {
@@ -107,7 +105,7 @@ impl Display for Scope {
     }
 }
 
-pub(crate) fn parse_statement_list_from_string(str: &str) -> Option<Scope> {
+pub(crate) fn parse_statement_list_from_string(str: &str) -> Option<String> {
     // todo: how should we handle token errors?
     let (tokens, _has_errors) = tokenize_string_no_eof(str);
     let (scope, tail, _, end) = parse_scope(&tokens, None)?;
@@ -115,18 +113,18 @@ pub(crate) fn parse_statement_list_from_string(str: &str) -> Option<Scope> {
         eprintln!("Unexpected end of scope at {}", end);
         return None;
     }
-    Some(scope)
+    Some(scope.to_string())
 }
 
 #[cfg(test)]
-pub(crate) fn parse_statement_from_string(str: &str) -> Option<Statement> {
+pub(crate) fn parse_statement_from_string(str: &str) -> Option<String> {
     let (tokens, _has_errors) = tokenize_string_no_eof(str);
     let (parse_result, tail) = parse_statement(&tokens, None)?;
     if let Some(first) = tail.first() {
         eprintln!("extra tokens found after the end of statement at {}", first.start);
     }
     match parse_result {
-        ParseResult::Statement(x) => Some(x),
+        ParseResult::Statement(x) => Some(x.to_string()),
         ParseResult::Nop{..} => None,
         ParseResult::ExitScope{..} => None,
     }
@@ -143,7 +141,7 @@ pub(crate) fn parse_scope(mut tail: &[Token], open_location: Option<Location>) -
         let (parse_result, tail2) = parse_statement(tail, None)?;
         tail = tail2;
         match parse_result {
-            ParseResult::Statement(stmt) => { 
+            ParseResult::Statement(stmt) => {
                 end_loc = stmt.end;
                 statements.push(stmt);
             },
@@ -154,7 +152,7 @@ pub(crate) fn parse_scope(mut tail: &[Token], open_location: Option<Location>) -
                 end_loc = end;
                 is_closed = true;
                 break;
-            } 
+            }
         }
     }
     if is_top_scope && is_closed {
@@ -334,7 +332,7 @@ fn parse_statement(tail: &[Token], prev_end: Option<Location>) -> Option<(ParseR
                 body: scope,
                 loc: start,
             };
-            let body = StatementBody::FunctionDeclaration(Rc::new(func).into());
+            let body = StatementBody::FunctionDeclaration(func);
             let stmt = Statement{body, start, end};
             Some((ParseResult::Statement(stmt), tail))
         },
@@ -431,8 +429,8 @@ mod test {
 
     #[test]
     fn test_nops() {
-        assert!(parse_statement_list_from_string(";;;;;").unwrap().statements.is_empty());
-        assert!(parse_statement_list_from_string("").unwrap().statements.is_empty());
+        assert_eq!("{ }", parse_statement_list_from_string(";;;;;").unwrap());
+        assert_eq!("{ }", parse_statement_list_from_string("").unwrap());
     }
 
     #[test]

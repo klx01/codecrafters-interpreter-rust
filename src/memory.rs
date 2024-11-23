@@ -3,22 +3,22 @@ use std::collections::HashMap;
 use std::mem;
 use std::rc::Rc;
 use crate::tokenizer::Location;
-use crate::value::{Declaration, FunctionRef, Value};
+use crate::value::{Declaration, FunctionRef, FunctionValue, Value};
 
-pub(crate) type MemoryScope = HashMap<String, ScopeValue>;
+pub(crate) type MemoryScope<'a> = HashMap<String, ScopeValue<'a>>;
 #[derive(Default)]
-pub(crate) struct Memory {
-    globals: MemoryScope,
-    closure_captures: Option<Rc<RefCell<MemoryScope>>>,
-    scopes: Vec<MemoryScope>,
-    call_scopes: Vec<Vec<MemoryScope>>,
+pub(crate) struct Memory<'a> {
+    globals: MemoryScope<'a>,
+    closure_captures: Option<Rc<RefCell<MemoryScope<'a>>>>,
+    scopes: Vec<MemoryScope<'a>>,
+    call_scopes: Vec<Vec<MemoryScope<'a>>>,
 }
 #[derive(Debug, Clone)]
-pub(crate) enum ScopeValue {
-    Value(Value),
-    Declaration(Declaration),
+pub(crate) enum ScopeValue<'a> {
+    Value(Value<'a>),
+    Declaration(Declaration<'a>),
 }
-impl Memory {
+impl<'a> Memory<'a> {
     pub(crate) fn new() -> Self {
         Self::default()
     }
@@ -38,25 +38,25 @@ impl Memory {
         self.scopes = scopes;
         self.closure_captures = None;
     }
-    pub(crate) fn declare_user_function(&mut self, orig: &FunctionRef, loc: Location) -> Option<()> {
+    pub(crate) fn declare_user_function(&mut self, orig: &'a FunctionValue<'a>, loc: Location) -> Option<()> {
         let captures = self.get_captures();
         let scope = self.get_last_scope();
-        let name = &orig.inner.name;
+        let name = &orig.name;
         if scope.contains_key(name) {
             eprintln!("Can not declare function with name {name} at {loc}, name is already used in this scope");
             return None;
         }
-        let value = orig.instance_with_captures(captures);
+        let value = FunctionRef::new(orig, captures);
         // the function that is being declared is not captured, so recursion is not possible for local functions just with captures
         // capturing it would lead to reference cycles
         // instead we can add callee to the scope during the call
         scope.insert(name.to_string(), ScopeValue::Declaration(Declaration::UserFunction(value)));
         Some(())
     }
-    fn get_last_scope(&mut self) -> &mut MemoryScope {
+    fn get_last_scope<'b>(&'b mut self) -> &'b mut MemoryScope<'a> {
         self.scopes.last_mut().unwrap_or(&mut self.globals)
     }
-    fn get_captures(&self) -> Option<Rc<RefCell<MemoryScope>>> {
+    fn get_captures(&self) -> Option<Rc<RefCell<MemoryScope<'a>>>> {
         if self.scopes.len() == 0 {
             return None;
         }
@@ -69,7 +69,7 @@ impl Memory {
         }
         Some(Rc::new(RefCell::new(captures)))
     }
-    pub(crate) fn init_closure(&mut self, orig: &FunctionRef, loc: Location) -> Option<()> {
+    pub(crate) fn init_closure(&mut self, orig: &FunctionRef<'a>, loc: Location) -> Option<()> {
         let name = &orig.inner.name;
         let Some(captures) = orig.captures.as_ref() else {
             eprintln!("init_closure was called on a function without captures {name} at {loc}");
@@ -96,7 +96,7 @@ impl Memory {
         scope.insert(name.to_string(), ScopeValue::Declaration(Declaration::NativeFunction(name)));
         true
     }
-    pub(crate) fn declare_variable(&mut self, name: &str, value: Value, loc: Location) -> Option<()> {
+    pub(crate) fn declare_variable(&mut self, name: &str, value: Value<'a>, loc: Location) -> Option<()> {
         let scope = self.get_last_scope();
         if let Some(val_ref) = scope.get_mut(name) {
             Self::do_assign(val_ref, value, name, loc)?;
@@ -105,7 +105,7 @@ impl Memory {
         }
         Some(())
     }
-    pub(crate) fn assign(&mut self, name: &str, value: Value, loc: Location) -> Option<()> {
+    pub(crate) fn assign(&mut self, name: &str, value: Value<'a>, loc: Location) -> Option<()> {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(val_ref) = scope.get_mut(name) {
                 return Self::do_assign(val_ref, value, name, loc);
@@ -122,7 +122,7 @@ impl Memory {
         eprintln!("Can not assign to an undefined variable {name} at {loc}");
         None
     }
-    fn do_assign(val_ref: &mut ScopeValue, value: Value, name: &str, loc: Location) -> Option<()> {
+    fn do_assign(val_ref: &mut ScopeValue<'a>, value: Value<'a>, name: &str, loc: Location) -> Option<()> {
         match val_ref {
             ScopeValue::Value(val_ref) => {
                 *val_ref = value;
@@ -134,7 +134,7 @@ impl Memory {
             }
         }
     }
-    pub(crate) fn get(&self, name: &str, loc: Location) -> Option<Value> {
+    pub(crate) fn get(&self, name: &str, loc: Location) -> Option<Value<'a>> {
         for scope in self.scopes.iter().rev() {
             if let Some(value) = scope.get(name) {
                 return Self::process_get_value(value);
@@ -151,7 +151,7 @@ impl Memory {
         eprintln!("Can not read an undefined variable {name} at {loc}");
         None
     }
-    fn process_get_value(value: &ScopeValue) -> Option<Value> {
+    fn process_get_value(value: &ScopeValue<'a>) -> Option<Value<'a>> {
         let value = match value {
             ScopeValue::Value(x) => x.clone(),
             ScopeValue::Declaration(x) => x.clone().into(),

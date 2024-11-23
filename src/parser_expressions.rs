@@ -4,23 +4,23 @@ use crate::tokenizer::{tokenize_string_no_eof, Location, Token, TokenKind};
 use crate::value::Value;
 
 #[derive(Debug)]
-pub(crate) enum ExpressionBody {
-    Literal(Value),
-    Unary(Box<UnaryExpression>),
-    Binary(Box<BinaryExpression>),
-    Grouping(Box<Expression>),
+pub(crate) enum ExpressionBody<'a> {
+    Literal(Value<'a>),
+    Unary(Box<UnaryExpression<'a>>),
+    Binary(Box<BinaryExpression<'a>>),
+    Grouping(Box<Expression<'a>>),
     Variable(String),
-    Assignment(Box<AssignmentExpression>),
-    Call{expr: Box<Expression>, args: Vec<Expression>},
+    Assignment(Box<AssignmentExpression<'a>>),
+    Call{expr: Box<Expression<'a>>, args: Vec<Expression<'a>>},
 }
 #[derive(Debug)]
-pub(crate) struct Expression {
-    pub body: ExpressionBody,
+pub(crate) struct Expression<'a> {
+    pub body: ExpressionBody<'a>,
     pub start: Location,
     pub end: Location,
 }
 
-impl Display for ExpressionBody {
+impl<'a> Display for ExpressionBody<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             ExpressionBody::Literal(Value::Number(n)) if n.fract() == 0.0 => f.write_fmt(format_args!("{n}.0")),
@@ -40,7 +40,7 @@ impl Display for ExpressionBody {
         }
     }
 }
-impl Display for Expression {
+impl<'a> Display for Expression<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!("{}", self.body))
     }
@@ -61,9 +61,9 @@ impl Display for UnaryOperator {
 }
 
 #[derive(Debug)]
-pub(crate) struct UnaryExpression {
+pub(crate) struct UnaryExpression<'a> {
     pub op: UnaryOperator,
-    pub ex: Expression,
+    pub ex: Expression<'a>,
 }
 
 #[derive(Debug, PartialEq, Copy, Clone)]
@@ -101,26 +101,26 @@ impl Display for BinaryOperator {
 }
 
 #[derive(Debug)]
-pub(crate) struct BinaryExpression {
+pub(crate) struct BinaryExpression<'a> {
     pub op: BinaryOperator,
-    pub left: Expression,
-    pub right: Expression,
+    pub left: Expression<'a>,
+    pub right: Expression<'a>,
 }
 
 #[derive(Debug)]
-pub(crate) struct AssignmentExpression {
+pub(crate) struct AssignmentExpression<'a> {
     pub var: String,
-    pub expr: Expression,
+    pub expr: Expression<'a>,
 }
 
-pub(crate) fn parse_expression_from_string(str: &str) -> Option<Expression> {
+pub(crate) fn parse_expression_from_string(str: &str) -> Option<String> {
     // todo: how should we handle token errors?
     let (tokens, _has_errors) = tokenize_string_no_eof(str);
     let (expr, tail) = parse_expression(&tokens, None)?;
     if !tail.is_empty() {
         eprintln!("extra tokens found after the end of expression");
     }
-    Some(expr)
+    Some(expr.to_string())
 }
 
 pub(crate) fn parse_expression(tail: &[Token], prev_end: Option<Location>) -> Option<(Expression, &[Token])> {

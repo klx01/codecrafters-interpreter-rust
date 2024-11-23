@@ -1,9 +1,9 @@
 use std::io::{stdout, Write};
 use std::rc::Rc;
 use std::time::SystemTime;
-use crate::parser_expressions::{parse_expression_from_string, BinaryOperator, Expression, ExpressionBody, UnaryOperator};
-use crate::parser_statements::{parse_statement_list_from_string, Scope, Statement, StatementBody};
-use crate::tokenizer::Location;
+use crate::parser_expressions::{parse_expression, BinaryOperator, Expression, ExpressionBody, UnaryOperator};
+use crate::parser_statements::{parse_scope, Scope, Statement, StatementBody};
+use crate::tokenizer::{tokenize_string_no_eof, Location};
 use crate::value::Value;
 use crate::memory::Memory;
 
@@ -24,23 +24,35 @@ impl EvalResult {
 }
 
 #[derive(Debug)]
-enum StatementResult {
+enum StatementResult<'a> {
     Next,
-    Return{val: Value, loc: Location},
+    Return{val: Value<'a>, loc: Location},
     // could also be break or continue, but this language does not have those
 }
 
-pub(crate) fn evaluate_expr_from_string(str: &str) -> Option<Value> {
-    let expr = parse_expression_from_string(str)?;
+pub(crate) fn evaluate_expr_from_string(str: &str) -> Option<String> {
+    // todo: how should we handle token errors?
+    let (tokens, _has_errors) = tokenize_string_no_eof(str);
+    let (expr, tail) = parse_expression(&tokens, None)?;
+    if !tail.is_empty() {
+        eprintln!("extra tokens found after the end of expression");
+    }
     let mut memory = Memory::new();
     let result = eval_expr(&expr, &mut memory, &mut stdout())?;
-    Some(result)
+    Some(result.to_string())
 }
 
 pub(crate) fn evaluate_statements_list_from_string(str: &str, output: &mut impl Write) -> EvalResult {
-    let Some(scope) = parse_statement_list_from_string(str) else {
+    // todo: how should we handle token errors?
+    let (tokens, _has_errors) = tokenize_string_no_eof(str);
+    let Some((scope, tail, _, end)) = parse_scope(&tokens, None) else {
         return EvalResult::ParseError;
     };
+    if !tail.is_empty() {
+        eprintln!("Unexpected end of scope at {}", end);
+        return EvalResult::ParseError;
+    }
+
     let mut memory = Memory::new();
     for func in ["clock", "_debug_native_function"] {
         let success = memory.declare_native_function(func);
@@ -61,7 +73,7 @@ pub(crate) fn evaluate_statements_list_from_string(str: &str, output: &mut impl 
     }
 }
 
-fn eval_scope(scope: &Scope, memory: &mut Memory, output: &mut impl Write) -> Option<StatementResult> {
+fn eval_scope<'a>(scope: &'a Scope<'a>, memory: &mut Memory<'a>, output: &mut impl Write) -> Option<StatementResult<'a>> {
     for statement in &scope.statements {
         let res = eval_statement(statement, memory, output)?;
         match res {
@@ -74,7 +86,7 @@ fn eval_scope(scope: &Scope, memory: &mut Memory, output: &mut impl Write) -> Op
     Some(StatementResult::Next)
 }
 
-fn eval_statement(statement: &Statement, memory: &mut Memory, output: &mut impl Write) -> Option<StatementResult> {
+fn eval_statement<'a>(statement: &'a Statement<'a>, memory: &mut Memory<'a>, output: &mut impl Write) -> Option<StatementResult<'a>> {
     match &statement.body {
         StatementBody::Print(expr) => {
             let res = eval_expr(expr, memory, output)?;
@@ -156,7 +168,7 @@ fn eval_statement(statement: &Statement, memory: &mut Memory, output: &mut impl 
     Some(StatementResult::Next)
 }
 
-fn eval_expr(expr: &Expression, memory: &mut Memory, output: &mut impl Write) -> Option<Value> {
+fn eval_expr<'a>(expr: &Expression<'a>, memory: &mut Memory<'a>, output: &mut impl Write) -> Option<Value<'a>> {
     let loc = expr.start;
     match &expr.body {
         ExpressionBody::Literal(x) => Some(x.clone()), // todo: is it possible to not clone this when we don't actually need to?
@@ -194,8 +206,8 @@ fn eval_expr(expr: &Expression, memory: &mut Memory, output: &mut impl Write) ->
             };
             let right = eval_expr(&expr.right, memory, output)?;
             match expr.op {
-                BinaryOperator::Equal => Some(Value::Bool(is_equal(left, right))),
-                BinaryOperator::NotEqual => Some(Value::Bool(!is_equal(left, right))),
+                BinaryOperator::Equal => Some(Value::Bool(is_equal(&left, &right))),
+                BinaryOperator::NotEqual => Some(Value::Bool(!is_equal(&left, &right))),
                 BinaryOperator::Less => process_number_values(
                     &left, &right,
                     |left, right| Value::Bool(left < right),
@@ -304,7 +316,7 @@ fn eval_expr(expr: &Expression, memory: &mut Memory, output: &mut impl Write) ->
     }
 }
 
-fn eval_args(args: &[Expression], memory: &mut Memory, output: &mut impl Write) -> Option<Vec<Value>> {
+fn eval_args<'a>(args: &[Expression<'a>], memory: &mut Memory<'a>, output: &mut impl Write) -> Option<Vec<Value<'a>>> {
     let mut arg_values = Vec::with_capacity(args.len());
     for arg in args {
         arg_values.push(eval_expr(arg, memory, output)?);
@@ -312,7 +324,7 @@ fn eval_args(args: &[Expression], memory: &mut Memory, output: &mut impl Write) 
     Some(arg_values)
 }
 
-fn is_equal(left: Value, right: Value) -> bool {
+fn is_equal<'a>(left: &Value<'a>, right: &Value<'a>) -> bool {
     match (left, right) {
         (Value::Nil, Value::Nil) => true,
         (Value::Bool(left), Value::Bool(right)) => left == right,
@@ -332,7 +344,7 @@ fn cast_to_bool(value: &Value) -> bool {
     }
 }
 
-fn process_number_values(left: &Value, right: &Value, res: impl Fn(f64, f64) -> Value, loc: Location, op: BinaryOperator) -> Option<Value> {
+fn process_number_values<'a>(left: &Value, right: &Value, res: impl Fn(f64, f64) -> Value<'a>, loc: Location, op: BinaryOperator) -> Option<Value<'a>> {
     match (left, right) {
         (Value::Number(left), Value::Number(right)) => {
             Some(res(*left, *right))
@@ -370,33 +382,25 @@ fn time_now() -> Option<f64> {
 
 #[cfg(test)]
 mod test {
-    use std::rc::Rc;
     use super::*;
 
     #[test]
     fn test_literals() {
         let res = evaluate_expr_from_string("nil");
-        assert_eq!(Some(Value::Nil), res);
         assert_eq!("nil", res.unwrap().to_string());
         let res = evaluate_expr_from_string("true");
-        assert_eq!(Some(Value::Bool(true)), res);
         assert_eq!("true", res.unwrap().to_string());
         let res = evaluate_expr_from_string("false");
-        assert_eq!(Some(Value::Bool(false)), res);
         assert_eq!("false", res.unwrap().to_string());
 
         let res = evaluate_expr_from_string("\"Hello, World!\"");
-        assert_eq!(Some(Value::String(Rc::new("Hello, World!".to_string()))), res);
         assert_eq!("Hello, World!", res.unwrap().to_string());
         let res = evaluate_expr_from_string("10.40");
-        assert_eq!(Some(Value::Number(10.4)), res);
         assert_eq!("10.4", res.unwrap().to_string());
         let res = evaluate_expr_from_string("10");
-        assert_eq!(Some(Value::Number(10.0)), res);
         assert_eq!("10", res.unwrap().to_string());
 
         let res = evaluate_expr_from_string("((false))");
-        assert_eq!(Some(Value::Bool(false)), res);
         assert_eq!("false", res.unwrap().to_string());
     }
 
@@ -491,7 +495,10 @@ mod test {
     fn test_strings() {
         let mut output = Vec::<u8>::new();
         let output = &mut output;
-        assert_eval_with_output("var a = \"test\"; var b = a; b = b + b; print a; print b;", EvalResult::Ok, "test\ntesttest\n", output);
+        assert_eval_with_output(
+            "var a = \"test\"; var b = a; var c = \"test\"; print a == b; print a == c; b = b + b; print a; print b;", 
+            EvalResult::Ok, "true\ntrue\ntest\ntesttest\n", output
+        );
     }
 
     #[test]

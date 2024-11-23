@@ -246,7 +246,7 @@ pub(crate) fn tokenize_string_no_eof(str: &str) -> (Vec<Token>, bool) {
                     kind: TokenKind::STRING,
                     code: format!("{char}{literal}{close_char}"),
                     literal: Some(literal),
-                    start, 
+                    start,
                     end,
                 };
                 tokens.push(token);
