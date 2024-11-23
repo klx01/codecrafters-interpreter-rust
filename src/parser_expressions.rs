@@ -189,6 +189,22 @@ fn parse_binary_expression<'a>(tail: &'a [Token], parent: Option<&'a Token>, par
 }
 
 fn parse_operand<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Expression, &'a [Token])> {
+    let (mut expr, mut tail) = parse_operand_inner(tail, parent)?;
+    loop {
+        let (paren, tail2) = check_token_kind(tail, TokenKind::LEFT_PAREN);
+        tail = tail2;
+        if let Some(paren) = paren {
+            let (args, tail2) = parse_call_args(tail, paren)?;
+            tail = tail2;
+            expr = Expression{ body: ExpressionBody::Call{ expr: Box::new(expr), args }, loc: paren.loc };
+        } else {
+            break;
+        }
+    }
+    Some((expr, tail))
+}
+
+fn parse_operand_inner<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Expression, &'a [Token])> {
     let Some((token, tail)) = tail.split_first() else {
         match parent {
             None => eprintln!("empty input"),
@@ -204,19 +220,7 @@ fn parse_operand<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Ex
     match token.kind {
         TokenKind::IDENTIFIER => {
             let name = token.code.clone(); // todo: check if we can remove copying here
-            let mut expr = Expression{ body: ExpressionBody::Variable(name), loc: token.loc };
-            let mut tail = tail;
-            loop {
-                let (paren, tail2) = check_token_kind(tail, TokenKind::LEFT_PAREN);
-                tail = tail2;
-                if paren.is_some() {
-                    let (args, tail2) = parse_call_args(tail, token)?;
-                    tail = tail2;
-                    expr = Expression{ body: ExpressionBody::Call{ expr: Box::new(expr), args }, loc: token.loc }; // todo: fix location
-                } else {
-                    break;
-                }
-            }
+            let expr = Expression{ body: ExpressionBody::Variable(name), loc: token.loc };
             return Some((expr, tail));
         }
         _ => {},
@@ -235,7 +239,7 @@ fn parse_operand<'a>(tail: &'a [Token], parent: Option<&'a Token>) -> Option<(Ex
         TokenKind::STRING => {
             // todo: check if we can remove copying here
             let string = token.literal.clone().expect("got a literal token without literal value");
-            Some(Value::String(Rc::new(string))) 
+            Some(Value::String(Rc::new(string)))
         },
         _ => None,
     };
@@ -368,6 +372,7 @@ mod test {
     #[test]
     fn test_parse_call() {
         assert_eq!("(call var(foo))", parse_expression_from_string("foo()").unwrap().to_string());
+        assert_eq!("(call 100.0)", parse_expression_from_string("100()").unwrap().to_string());
         assert_eq!("(call (call (call var(foo))))", parse_expression_from_string("foo()()()").unwrap().to_string());
         assert_eq!("(call var(foo) 1.0 2.0 3.0)", parse_expression_from_string("foo(1, 2, 3)").unwrap().to_string());
         assert_eq!("(call var(foo) 1.0 2.0 3.0)", parse_expression_from_string("foo(1, 2, 3,)").unwrap().to_string());

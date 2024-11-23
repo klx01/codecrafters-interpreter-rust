@@ -626,6 +626,7 @@ mod test {
         assert_eval_with_output("fun foo() {}; var test = foo; print test;", EvalResult::Ok, "<fn foo>\n", output);
         assert_eval_with_output("fun foo() {}; {var foo = 1; print foo;} print foo;", EvalResult::Ok, "1\n<fn foo>\n", output);
         assert_eval_with_output("var foo = 1; {fun foo() {}; print foo;} print foo;", EvalResult::Ok, "<fn foo>\n1\n", output);
+        assert_eval_with_output("100();", EvalResult::RuntimeError, "", output);
     }
 
     #[test]
