@@ -146,7 +146,7 @@ fn eval_statement(statement: &Statement, memory: &mut Memory, output: &mut impl 
             }
         }
         StatementBody::FunctionDeclaration(func) => {
-            memory.declare_user_function(func.clone(), statement.loc)?;
+            memory.declare_user_function(func, statement.loc)?;
         }
         StatementBody::Return(expr) => {
             let res = eval_expr(expr, memory, output)?;
@@ -277,14 +277,17 @@ fn eval_expr(expr: &Expression, memory: &mut Memory, output: &mut impl Write) ->
                     },
                 }
                 Value::UserFunction(function) => {
-                    let function = function.inner;
-                    check_args_count(args, function.args.len(), name, loc)?;
+                    let inner = &function.inner;
+                    check_args_count(args, inner.args.len(), name, loc)?;
                     let arg_values = eval_args(args, memory, output)?;
                     memory.enter_call();
-                    for (index, arg_value) in arg_values.into_iter().enumerate() {
-                        memory.declare_variable(&function.args[index], arg_value, loc)?;
+                    if function.captures.is_some() {
+                        memory.init_closure(&function, loc)?;
                     }
-                    let result = eval_scope(&function.body, memory, output);
+                    for (index, arg_value) in arg_values.into_iter().enumerate() {
+                        memory.declare_variable(&inner.args[index], arg_value, loc)?;
+                    }
+                    let result = eval_scope(&inner.body, memory, output);
                     memory.leave_call();
                     let return_value = match result? {
                         StatementResult::Next => Value::Nil,
@@ -623,6 +626,55 @@ mod test {
         assert_eval_with_output("fun foo() {}; var test = foo; print test;", EvalResult::Ok, "<fn foo>\n", output);
         assert_eval_with_output("fun foo() {}; {var foo = 1; print foo;} print foo;", EvalResult::Ok, "1\n<fn foo>\n", output);
         assert_eval_with_output("var foo = 1; {fun foo() {}; print foo;} print foo;", EvalResult::Ok, "<fn foo>\n1\n", output);
+    }
+
+    #[test]
+    fn test_closures() {
+        let mut output = Vec::<u8>::new();
+        let output = &mut output;
+        assert_eval_with_output(
+            "fun foo(a) { fun foo(b) {return a + b;} return foo; }
+            var a = foo(1); print a(2); print a;
+            var b = a; print a == b; print b(5);
+            var c = foo(1); print c(2); print a == c;
+            ", 
+            EvalResult::Ok, "3\n<fn foo>\ntrue\n6\n3\nfalse\n", output
+        );
+        assert_eval_with_output(
+            "fun makeCounter() {
+                var i = 0;
+                fun count() {
+                  i = i + 1;
+                  var j = i;
+                  var i = 0;
+                  return j;
+                }
+                return count;
+            }
+            var a = makeCounter();
+            var b = a;
+            print a();
+            print b();
+            print a();
+            print a == b;
+            var c = makeCounter();
+            print c();
+            print a == c;
+            ", 
+            EvalResult::Ok, "1\n2\n3\ntrue\n1\nfalse\n", output
+        );
+        assert_eval_with_output(
+            "{
+              fun fib(n) {
+                if (n < 2) return n;
+                return fib(n - 1) + fib(n - 2);
+              }
+            
+              print fib(8);
+            }
+            ", 
+            EvalResult::Ok, "21\n", output
+        );
     }
     
     fn assert_eval_with_output(statements: &str, expect_result: EvalResult, expect_output: &str, output: &mut Vec<u8>) {

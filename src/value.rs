@@ -1,5 +1,7 @@
+use std::cell::RefCell;
 use std::fmt::{Display, Formatter};
 use std::rc::Rc;
+use crate::memory::MemoryScope;
 use crate::parser_statements::Scope;
 use crate::tokenizer::Location;
 
@@ -57,16 +59,32 @@ pub(crate) struct FunctionValue {
 
 #[derive(Debug, Clone)]
 pub(crate) struct FunctionRef {
-    pub(crate) inner: Rc<FunctionValue>,
+    pub(crate) inner: Rc<FunctionValue>, // todo: check if this can be changed to a reference instead of Rc
+    pub(crate) captures: Option<Rc<RefCell<MemoryScope>>>,
+}
+impl FunctionRef {
+    pub(crate) fn instance_with_captures(&self, captures: Option<Rc<RefCell<MemoryScope>>>) -> Self {
+        Self{
+            inner: Rc::clone(&self.inner),
+            captures
+        }
+    }
 }
 impl From<Rc<FunctionValue>> for FunctionRef {
     fn from(value: Rc<FunctionValue>) -> Self {
-        Self{inner: value}
+        Self{inner: value, captures: None}
     }
 }
 impl PartialEq for FunctionRef {
     fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.inner, &other.inner)
+        if !Rc::ptr_eq(&self.inner, &other.inner) {
+            return false;
+        }
+        match (&self.captures, &other.captures) {
+            (None, None) => true,
+            (Some(left), Some(right)) => Rc::ptr_eq(left, right),
+            _ => false,
+        }
     }
 }
 

@@ -319,12 +319,13 @@ fn parse_statement(tail: &[Token]) -> Option<(ParseResult, &[Token])> {
         },
         TokenKind::FUN => {
             let (name, tail) = expect_token_kind(tail, TokenKind::IDENTIFIER, loc)?;
+            let name = name.code.clone(); // todo: check if we can remove copying here
             let (_, tail) = expect_token_kind(tail, TokenKind::LEFT_PAREN, loc)?;
-            let (args, tail) = parse_call_args(tail, loc)?;
+            let (args, tail) = parse_call_args(tail, &name, loc)?;
             let (_, tail) = expect_token_kind(tail, TokenKind::LEFT_BRACE, loc)?;
             let (scope, tail) = parse_scope(tail, false)?;
             let func = FunctionValue{
-                name: name.code.clone(), // todo: check if we can remove copying here
+                name,
                 args,
                 body: scope,
                 loc,
@@ -387,7 +388,7 @@ fn check_statement_terminated(tail: &[Token], start_loc: Location) -> Option<&[T
     Some(tail)
 }
 
-fn parse_call_args(mut tail: &[Token], loc: Location) -> Option<(Vec<String>, &[Token])> {
+fn parse_call_args<'a, 'b>(mut tail: &'a [Token], func_name: &'b str, loc: Location) -> Option<(Vec<String>, &'a [Token])> {
     let mut args = vec![];
     loop {
         let (paren, tail2) = check_token_kind(tail, TokenKind::RIGHT_PAREN);
@@ -397,9 +398,14 @@ fn parse_call_args(mut tail: &[Token], loc: Location) -> Option<(Vec<String>, &[
         }
         let (arg, tail2) = expect_token_kind(tail, TokenKind::IDENTIFIER, loc)?; // todo: fix location
         tail = tail2;
-        args.push(arg.code.clone()); // todo: check if it's possible not to clone this
+        let arg_name = arg.code.clone(); // todo: check if it's possible not to clone this
+        if arg_name == func_name {
+            eprintln!("argument name can not be the same as function name at {}", arg.loc);
+            return None;
+        }
+        args.push(arg_name);
         let Some((next, tail2)) = tail.split_first() else {
-            eprintln!("Unexpected end of token stream, expected ) or , in arguments list for a function declaration at {}", loc); // todo: fix location
+            eprintln!("Unexpected end of token stream, expected ) or , in arguments list for a function declaration after {}", arg.loc);
             return None;
         };
         tail = tail2;
@@ -563,6 +569,7 @@ mod test {
         assert_eq!(expected, parse_statement_list_from_string(statements).unwrap().to_string());
 
         assert!(parse_statement_list_from_string("fun () {}").is_none());
+        assert!(parse_statement_list_from_string("fun foo(foo) {}").is_none());
         assert!(parse_statement_list_from_string("fun 123() {}").is_none());
         assert!(parse_statement_list_from_string("fun foo(123) {}").is_none());
         assert!(parse_statement_list_from_string("fun foo()").is_none());
