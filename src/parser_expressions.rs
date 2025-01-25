@@ -148,39 +148,35 @@ fn parse_assignment(mut tail: &[Token], prev_end: Option<Location>) -> Option<(E
             _ => {},
         }
     };
-    parse_binary_expression(tail, prev_end, 6)
+    parse_binary_expression(tail, prev_end, 0)
 }
 
 fn parse_binary_expression(tail: &[Token], prev_end: Option<Location>, parent_priority: u8) -> Option<(Expression, &[Token])> {
-    if parent_priority == 0 {
-        return parse_operand(tail, prev_end);
-    }
-    let current_priority = parent_priority - 1;
-    let (mut left, mut tail) = parse_binary_expression(tail, prev_end, current_priority)?;
+    let (mut left, mut tail) = parse_operand(tail, prev_end)?;
     loop {
         let Some((next, tail2)) = tail.split_first() else {
             break;
         };
         let (op, priority) = match next.kind {
-            TokenKind::OR => (BinaryOperator::Or, 5),
-            TokenKind::AND => (BinaryOperator::And, 4),
+            TokenKind::OR => (BinaryOperator::Or, 1),
+            TokenKind::AND => (BinaryOperator::And, 2),
             TokenKind::EQUAL_EQUAL => (BinaryOperator::Equal, 3),
             TokenKind::BANG_EQUAL => (BinaryOperator::NotEqual, 3),
-            TokenKind::LESS => (BinaryOperator::Less, 2),
-            TokenKind::LESS_EQUAL => (BinaryOperator::LessOrEqual, 2),
-            TokenKind::GREATER => (BinaryOperator::Greater, 2),
-            TokenKind::GREATER_EQUAL => (BinaryOperator::GreaterOrEqual, 2),
-            TokenKind::PLUS => (BinaryOperator::Plus, 1),
-            TokenKind::MINUS => (BinaryOperator::Minus, 1),
-            TokenKind::STAR => (BinaryOperator::Multiply, 0),
-            TokenKind::SLASH => (BinaryOperator::Divide, 0),
+            TokenKind::LESS => (BinaryOperator::Less, 4),
+            TokenKind::LESS_EQUAL => (BinaryOperator::LessOrEqual, 4),
+            TokenKind::GREATER => (BinaryOperator::Greater, 4),
+            TokenKind::GREATER_EQUAL => (BinaryOperator::GreaterOrEqual, 4),
+            TokenKind::PLUS => (BinaryOperator::Plus, 5),
+            TokenKind::MINUS => (BinaryOperator::Minus, 5),
+            TokenKind::STAR => (BinaryOperator::Multiply, 6),
+            TokenKind::SLASH => (BinaryOperator::Divide, 6),
             _ => break,
         };
-        if priority != current_priority {
+        if priority <= parent_priority {
             break;
         }
         tail = tail2;
-        let (right, tail2) = parse_binary_expression(tail, Some(next.end), current_priority)?;
+        let (right, tail2) = parse_binary_expression(tail, Some(next.end), priority)?;
         tail = tail2;
         let start = left.start;
         let end = right.end;
@@ -361,7 +357,7 @@ mod test {
         assert_eq!("(- (+ 1.0 (/ (* 2.0 3.0) 4.0)) 5.0)", parse_expression_from_string("1 + 2 * 3 / 4 - 5").unwrap().to_string());
         assert_eq!("(== (> (+ 3.0 2.0) 5.0) (>= 3.0 (+ 2.0 2.0)))", parse_expression_from_string("3 + 2 > 5 == 3 >= 2 + 2").unwrap().to_string());
 
-        assert_eq!("(+ (+ (+ (+ var(a) var(b)) var(c)) 1.0) 2.0)", parse_expression_from_string("a + b + c + 1 + 2").unwrap().to_string());
+        assert_eq!("(+ (- (+ (+ var(a) var(b)) var(c)) 1.0) 2.0)", parse_expression_from_string("a + b + c - 1 + 2").unwrap().to_string());
         assert_eq!("(= var(a) (= var(b) (= var(c) (+ 1.0 2.0))))", parse_expression_from_string("a = b = c = 1 + 2").unwrap().to_string());
         assert_eq!("1.0", parse_expression_from_string("1 = a").unwrap().to_string());
         assert_eq!("(+ 1.0 var(a))", parse_expression_from_string("1 + a = 1").unwrap().to_string());
